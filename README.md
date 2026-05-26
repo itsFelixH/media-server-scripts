@@ -1,6 +1,21 @@
-# media-server-scripts
+# Media Server Scripts
 
-Maintenance and monitoring scripts for a Plex media server stack running on a Raspberry Pi (or any Linux box). Handles health checks, backups, library reporting, media analysis, and scheduled maintenance.
+Maintenance and monitoring scripts for a [Plex](https://www.plex.tv/) media server stack running on a Raspberry Pi (or any Linux box). Handles health checks, backups, library reporting, media analysis, and scheduled maintenance.
+
+## The Stack
+
+These scripts are built around the following services:
+
+| Service | What it does | Schedule | Links |
+|---------|-------------|----------|-------|
+| [Plex](https://www.plex.tv/) | Media streaming server | Always running | [Support](https://support.plex.tv/) |
+| [Kometa](https://github.com/Kometa-Team/Kometa) | Metadata, collections, and overlay management for Plex | Daily at 05:00 (internal scheduler) | [Wiki](https://kometa.wiki/en/latest/) |
+| [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) | Upcoming movies/TV shows + TV show status overlays for Kometa | Daily at 02:00 (Docker internal cron) | [Docs](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) |
+| [ImageMaid](https://github.com/Kometa-Team/ImageMaid) | Plex metadata image cleanup and DB optimization | Weekly Sundays at 07:00 (Docker internal) | [GitHub](https://github.com/Kometa-Team/ImageMaid) |
+| [Radarr](https://radarr.video/) | Movie management and downloads | Always running (systemd) | |
+| [Sonarr](https://sonarr.tv/) | TV show management and downloads | Always running (systemd) | |
+
+The scripts monitor, maintain, and report on this stack. They don't replace any of these tools. They wrap around them to keep everything healthy and give you visibility into your library.
 
 ## Quick Start
 
@@ -26,8 +41,10 @@ bash healthcheck.sh
 - **Core tools**: `jq`, `curl`
 - **Media analysis**: `ffprobe` (from ffmpeg)
 - **Metadata audit**: `python3`, `python3-yaml`
-- **Docker**: For container management (Kometa, UMTK, etc.)
+- **Docker**: For container management (Kometa, UMTK, ImageMaid, etc.)
 - **systemd**: For service monitoring (Plex, Radarr, Sonarr)
+
+---
 
 ## Scripts Overview
 
@@ -43,7 +60,7 @@ bash healthcheck.sh
 | `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
 | `runkometa.sh` | Interactive Kometa runner with library/mode selection | Manual |
 
-All scripts support `-h`/`--help` and `--no-discord`.  
+All scripts support `-h`/`--help` and `--no-discord`.
 Scripts with terminal output support `-q`/`--quiet` for cron use.
 
 ---
@@ -61,10 +78,10 @@ Copy `config.yml.template` to `config.yml` and fill in your values. Below is wha
 | Key | Required | Description |
 |-----|----------|-------------|
 | `server.hostname` | ✅ | Shown in Discord messages |
-| `discord.alerts` | ❌ | Webhook URL for `#server-alerts` (skipped if empty) |
-| `discord.notifications` | ❌ | Webhook URL for `#notifications` (skipped if empty) |
 | `paths.logs` | ✅ | Where scripts write logs |
 | `paths.reports` | ✅ | Where reports are saved |
+| `discord.alerts` | ❌ | Webhook URL for `#server-alerts` (skipped if empty) |
+| `discord.notifications` | ❌ | Webhook URL for `#notifications` (skipped if empty) |
 | `notifications.footer_prefix` | ❌ | Discord embed footer (defaults to hostname) |
 | `discord.description_limit` | ❌ | Max embed chars (default: 4000) |
 | `discord.content_limit` | ❌ | Max content chars (default: 1900) |
@@ -98,7 +115,7 @@ Runs silently. Only alerts Discord when something is wrong. Auto-restarts failed
 #### What it checks
 
 - systemd services (Plex, Radarr, Sonarr, Bazarr)
-- Docker containers running + healthy
+- Docker containers running + healthy (Kometa, UMTK, ImageMaid)
 - Root disk and media drive usage
 - RAM and swap usage
 - CPU temperature
@@ -189,17 +206,11 @@ Creates a zip archive of all critical configs and scripts. Manages retention aut
 - Kometa configs (`config.yml`, `movies.yml`, `tv.yml`, `playlists.yml`)
 - Kometa metadata files
 - All scripts in this repo
-- UMTK configs
-- ImageMaid config
+- UMTK configs (`config.yml`, `tssk_config.yml`)
+- ImageMaid config (`.env`)
 - Docker compose files
 - WTWP database
 - Library catalog snapshot
-
-#### Output
-
-```
-/mnt/Media/backups/plex-config-YYYYMMDD.zip
-```
 
 </details>
 
@@ -348,7 +359,7 @@ Scans video files, probes each for codec and resolution, filters by mode. Suppor
 <details>
 <summary><strong>runkometa.sh</strong> — interactive Kometa runner</summary>
 
-Menu-driven interface for running Kometa inside its Docker container with different options.
+Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa) inside its Docker container with different options.
 
 #### Config entries
 
@@ -395,14 +406,28 @@ Example cron entries (adjust paths to your install location):
 30 4 28 * * bash ~/kometa/scripts/storage-report.sh --quiet
 ```
 
+The Docker-based services have their own internal schedules:
+
+| Service | Schedule | Managed by |
+|---------|----------|------------|
+| Kometa | Daily at 05:00 | `KOMETA_TIMES` env var in compose |
+| UMTK | Daily at 02:00 | Internal cron in container |
+| ImageMaid | Weekly Sundays at 07:00 | `SCHEDULE` in `.env` |
+
+---
+
 ## Discord Notifications
 
-Two channels with separate webhooks:
+Optional. If webhooks are configured, scripts send notifications to two channels:
 
 | Channel | Purpose | Triggers |
 |---------|---------|----------|
 | `#server-alerts` | Failures and warnings | Health check failures, backup errors, container down, token mismatch |
 | `#notifications` | Successful runs | Backup complete, maintenance done, reports generated |
+
+Leave the webhook URLs empty in `config.yml` to disable notifications entirely, or use `--no-discord` per-run.
+
+---
 
 ## File Structure
 
@@ -427,6 +452,15 @@ Two channels with separate webhooks:
 │   └── ...
 └── reports/                # Generated markdown reports (gitignored)
 ```
+
+---
+
+## Related Projects
+
+- [Kometa](https://github.com/Kometa-Team/Kometa) — Metadata, collections, and overlays for Plex
+- [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) — Upcoming movies/TV shows + status overlays
+- [ImageMaid](https://github.com/Kometa-Team/ImageMaid) — Plex image cleanup and DB optimization
+- [WTWP](https://github.com/netplexflix/What-to-watch-on-Plex) — Group swiping app to decide what to watch
 
 ## License
 
