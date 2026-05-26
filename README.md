@@ -1,6 +1,6 @@
 # media-server-scripts
 
-Maintenance and monitoring scripts for a Plex media server stack running on a Raspberry Pi (or any Linux box). Handles health checks, backups, library reporting, media analysis, and scheduled maintenance — all with Discord notifications.
+Maintenance and monitoring scripts for a Plex media server stack running on a Raspberry Pi (or any Linux box). Handles health checks, backups, library reporting, media analysis, and scheduled maintenance.
 
 ## Quick Start
 
