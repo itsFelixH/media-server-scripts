@@ -26,7 +26,7 @@ for arg in "$@"; do
 done
 
 ####### CONFIGURATION #######
-SCRIPTS_DIR="$HOME/kometa/scripts"
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
 
 LOG_FILE="${LOG_DIR}/maintenance/maintenance_$(date +%Y%m%d_%H%M%S).log"
