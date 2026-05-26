@@ -205,12 +205,11 @@ Creates a zip archive of all critical configs and scripts. Manages retention aut
 
 - Kometa configs (`config.yml`, `movies.yml`, `tv.yml`, `playlists.yml`)
 - Kometa metadata files
-- All scripts in this repo
+- Scripts config (`config.yml`)
 - UMTK configs (`config.yml`, `tssk_config.yml`)
 - ImageMaid config (`.env`)
 - Docker compose files
-- WTWP database
-- Library catalog snapshot
+- Crontab
 
 </details>
 
