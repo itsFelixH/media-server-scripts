@@ -150,6 +150,7 @@ send_discord() {
     local color="$4"
 
     [ "$NO_DISCORD" = true ] && return
+    [[ -z "$webhook" ]] && return
 
     # Truncate description if it exceeds Discord's limit
     if [ ${#description} -gt $DISCORD_DESC_LIMIT ]; then

@@ -88,6 +88,7 @@ fi
 send_discord() {
     local webhook="$1" title="$2" description="$3" color="$4"
     [ "$NO_DISCORD" = true ] && return
+    [[ -z "$webhook" ]] && return
     if [ ${#description} -gt $DISCORD_DESC_LIMIT ]; then
         description="${description:0:$((DISCORD_DESC_LIMIT - 20))}…
 
