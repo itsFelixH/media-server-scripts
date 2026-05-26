@@ -22,8 +22,8 @@ plex:
   url: http://localhost:32400         # Host-local Plex URL
   token: xxxxxxxxxxxxxxxxxxxx         # X-Plex-Token (https://support.plex.tv/articles/204059436)
 
-# [REQUIRED] Discord webhook URLs
-# Used by: ALL scripts
+# [OPTIONAL] Discord webhook URLs
+# Used by: ALL scripts (scripts work fine without Discord — notifications are simply skipped)
 # alerts:        failures, critical warnings → #server-alerts
 # notifications: successful runs, reports   → #notifications
 discord:
