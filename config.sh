@@ -4,12 +4,11 @@
 #   SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 #   source "$SCRIPTS_DIR/config.sh"
 #
-# After sourcing, the following variables are available:
+# Variables exported (grouped by section):
 #
-#   Server:     SERVER_HOSTNAME, SERVER_IP, SERVER_USER, SERVER_TIMEZONE
-#   Plex:       PLEX_URL, PLEX_URL_DOCKER, PLEX_URL_KOMETA, PLEX_TOKEN
-#   API Keys:   API_KEY_TMDB, API_KEY_MDBLIST, API_KEY_RADARR, API_KEY_SONARR, API_KEY_GITHUB_PAT
-#   Trakt:      TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET
+#   Server:     SERVER_HOSTNAME
+#   Plex:       PLEX_URL, PLEX_TOKEN
+#   API Keys:   API_KEY_RADARR, API_KEY_SONARR
 #   Discord:    DISCORD_ALERTS, DISCORD_NOTIFICATIONS, DISCORD_DESC_LIMIT, DISCORD_CONTENT_LIMIT
 #   Paths:      KOMETA_CONFIG, SCRIPTS_DIR, LOG_DIR, REPORT_DIR, REPORTS_DIR, METADATA_DIR,
 #               MOVIES_DIR, TV_DIR, BACKUP_DIR,
@@ -17,12 +16,12 @@
 #   Services:   PLEX_SERVICE, ARR_SERVICES (array), DOCKER_CONTAINERS (array)
 #   Thresholds: THRESH_DISK_ROOT_WARN, THRESH_DISK_ROOT_CRITICAL, THRESH_DISK_MEDIA_CRITICAL,
 #               THRESH_MEMORY_CRITICAL, THRESH_TEMP_CRITICAL, THRESH_TEMP_WARN,
-#               THRESH_LOAD_MULTIPLIER, THRESH_CONTAINER_RESTART_WARN, THRESH_TASK_STALE_MIN
+#               THRESH_CONTAINER_RESTART_WARN, THRESH_TASK_STALE_MIN
 #   Retention:  RETENTION_LOGS_DAYS, RETENTION_UMTK_LOGS_DAYS, RETENTION_BACKUPS_DAYS,
 #               RETENTION_PTS_DAYS
+#   Notify:     NOTIFY_ON_SUCCESS, NOTIFY_ON_FAILURE, FOOTER_PREFIX
 #   Defaults:   MEDIA_ANALYZER_DIR, MEDIA_ANALYZER_THRESHOLD_GB, MEDIA_ANALYZER_MIN_BITRATE,
 #               ENCODE_QUEUE_DIR, ENCODE_QUEUE_LIMIT, ENCODE_QUEUE_MIN_SIZE_GB, ENCODE_QUEUE_HEVC_RATIO
-#   Notify:     NOTIFY_ON_SUCCESS, NOTIFY_ON_FAILURE, FOOTER_PREFIX
 
 # Determine scripts directory (caller should set SCRIPTS_DIR before sourcing, or we detect it)
 if [ -z "$SCRIPTS_DIR" ]; then
@@ -96,26 +95,14 @@ _cfg_list() {
 
 # Server
 SERVER_HOSTNAME="$(_cfg server.hostname)"
-SERVER_IP="$(_cfg server.ip)"
-SERVER_USER="$(_cfg server.user)"
-SERVER_TIMEZONE="$(_cfg server.timezone)"
 
 # Plex
-PLEX_URL="$(_cfg plex.url)"
-PLEX_URL_DOCKER="$(_cfg plex.url_docker)"
-PLEX_URL_KOMETA="$(_cfg plex.url_kometa)"
+PLEX_URL="$(_cfg plex.url "http://localhost:32400")"
 PLEX_TOKEN="$(_cfg plex.token)"
 
-# API Keys
-API_KEY_TMDB="$(_cfg api_keys.tmdb)"
-API_KEY_MDBLIST="$(_cfg api_keys.mdblist)"
+# API Keys (optional — scripts skip checks if empty)
 API_KEY_RADARR="$(_cfg api_keys.radarr)"
 API_KEY_SONARR="$(_cfg api_keys.sonarr)"
-API_KEY_GITHUB_PAT="$(_cfg api_keys.github_pat)"
-
-# Trakt
-TRAKT_CLIENT_ID="$(_cfg trakt.client_id)"
-TRAKT_CLIENT_SECRET="$(_cfg trakt.client_secret)"
 
 # Discord
 DISCORD_ALERTS="$(_cfg discord.alerts)"
@@ -138,7 +125,7 @@ IMAGEMAID_CONFIG_DIR="$(_cfg paths.imagemaid_config)"
 WTWP_DATA_DIR="$(_cfg paths.wtwp_data)"
 
 # Services
-PLEX_SERVICE="$(_cfg services.plex)"
+PLEX_SERVICE="$(_cfg services.plex "plexmediaserver")"
 mapfile -t ARR_SERVICES < <(_cfg_list services arr)
 mapfile -t DOCKER_CONTAINERS < <(_cfg_list services docker_containers)
 
@@ -149,7 +136,6 @@ THRESH_DISK_MEDIA_CRITICAL="$(_cfg thresholds.disk_media_critical 95)"
 THRESH_MEMORY_CRITICAL="$(_cfg thresholds.memory_critical 95)"
 THRESH_TEMP_CRITICAL="$(_cfg thresholds.temperature_critical 80)"
 THRESH_TEMP_WARN="$(_cfg thresholds.temperature_warn 70)"
-THRESH_LOAD_MULTIPLIER="$(_cfg thresholds.load_multiplier 1)"
 THRESH_CONTAINER_RESTART_WARN="$(_cfg thresholds.container_restart_warn 3)"
 THRESH_TASK_STALE_MIN="$(_cfg thresholds.task_stale_minutes 1560)"
 
@@ -162,18 +148,18 @@ RETENTION_PTS_DAYS="$(_cfg retention.plextraktsync_days 14)"
 # Notifications
 NOTIFY_ON_SUCCESS="$(_cfg notifications.notify_on_success true)"
 NOTIFY_ON_FAILURE="$(_cfg notifications.notify_on_failure true)"
-FOOTER_PREFIX="$(_cfg notifications.footer_prefix bundepi)"
+FOOTER_PREFIX="$(_cfg notifications.footer_prefix "$SERVER_HOSTNAME")"
 
 # Ensure log and report directories exist
 mkdir -p "$LOG_DIR" "$REPORT_DIR"
 
 # Media Analyzer defaults
-MEDIA_ANALYZER_DIR="$(_cfg media_analyzer.default_directory "/mnt/Media/TV Shows")"
+MEDIA_ANALYZER_DIR="$(_cfg media_analyzer.default_directory "$TV_DIR")"
 MEDIA_ANALYZER_THRESHOLD_GB="$(_cfg media_analyzer.threshold_gb 5)"
 MEDIA_ANALYZER_MIN_BITRATE="$(_cfg media_analyzer.min_bitrate_kbps 1000)"
 
 # Encode Queue defaults
-ENCODE_QUEUE_DIR="$(_cfg encode_queue.default_directory "/mnt/Media/TV Shows")"
+ENCODE_QUEUE_DIR="$(_cfg encode_queue.default_directory "$TV_DIR")"
 ENCODE_QUEUE_LIMIT="$(_cfg encode_queue.limit 50)"
 ENCODE_QUEUE_MIN_SIZE_GB="$(_cfg encode_queue.min_size_gb 1)"
 ENCODE_QUEUE_HEVC_RATIO="$(_cfg encode_queue.hevc_ratio 45)"
