@@ -61,8 +61,8 @@ Copy `config.yml.template` to `config.yml` and fill in your values. Below is wha
 | Key | Required | Description |
 |-----|----------|-------------|
 | `server.hostname` | ✅ | Shown in Discord messages |
-| `discord.alerts` | ✅ | Webhook URL for `#server-alerts` |
-| `discord.notifications` | ✅ | Webhook URL for `#notifications` |
+| `discord.alerts` | ❌ | Webhook URL for `#server-alerts` (skipped if empty) |
+| `discord.notifications` | ❌ | Webhook URL for `#notifications` (skipped if empty) |
 | `paths.logs` | ✅ | Where scripts write logs |
 | `paths.reports` | ✅ | Where reports are saved |
 | `notifications.footer_prefix` | ❌ | Discord embed footer (defaults to hostname) |
