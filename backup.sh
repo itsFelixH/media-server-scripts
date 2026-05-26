@@ -19,7 +19,7 @@ Config Backup — Backs up all critical configuration files.
 
 Usage: backup.sh [options]
 
-Backs up Kometa, UMTK, ImageMaid, Docker compose files, and scripts
+Backs up Kometa, UMTK, ImageMaid, and Docker compose files
 to /mnt/Media/backups/plex-config-YYYYMMDD.zip
 
 Report files (*.md from logs/) are archived separately to:
@@ -131,20 +131,9 @@ cp "$KOMETA_CONFIG/tv.yml" "$TEMP_DIR/kometa/config/" 2>/dev/null
 cp "$KOMETA_CONFIG/playlists.yml" "$TEMP_DIR/kometa/config/" 2>/dev/null
 cp -r "$METADATA_DIR" "$TEMP_DIR/kometa/config/" 2>/dev/null
 
-# --- Scripts ---
-echo "Collecting scripts..."
-cp "$SCRIPTS_DIR/maintenance.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/runkometa.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/backup.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/healthcheck.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/media-analyzer.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/storage-report.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/metadata-audit.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/library-catalog.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/encode-queue.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
+# --- Scripts config ---
+echo "Collecting scripts config..."
 cp "$SCRIPTS_DIR/config.yml" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/config.yml.template" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
-cp "$SCRIPTS_DIR/config.sh" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
 
 # --- UMTK/TSSK ---
 echo "Collecting UMTK config..."
