@@ -26,7 +26,9 @@ SERIES_LIBRARY="TV Shows"
 
 # Logging — only created when a command actually runs
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="$SCRIPTS_DIR/logs/runkometa"
+source "$SCRIPTS_DIR/config.sh"
+
+LOG_DIR="$LOG_DIR/runkometa"
 mkdir -p "$LOG_DIR"
 LOG_FILE=""
 
@@ -60,9 +62,9 @@ show_last_run() {
     fi
 
     # Also check Kometa's own log
-    if [ -f "$HOME/kometa/config/logs/meta.log" ]; then
+    if [ -f "$KOMETA_CONFIG/logs/meta.log" ]; then
         local meta_age
-        meta_age=$(stat -c%Y "$HOME/kometa/config/logs/meta.log" 2>/dev/null)
+        meta_age=$(stat -c%Y "$KOMETA_CONFIG/logs/meta.log" 2>/dev/null)
         local now
         now=$(date +%s)
         local hours_ago=$(( (now - meta_age) / 3600 ))
