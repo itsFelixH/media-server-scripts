@@ -113,13 +113,14 @@ if [ "$disk_usage" -gt "$THRESH_DISK_ROOT_CRITICAL" ]; then
 fi
 
 # Check disk space (media drive)
-if mountpoint -q /mnt/Media 2>/dev/null; then
-    media_usage=$(df /mnt/Media | awk 'NR==2 {print $5}' | tr -d '%')
+MEDIA_MOUNT=$(dirname "$MOVIES_DIR")
+if mountpoint -q "$MEDIA_MOUNT" 2>/dev/null; then
+    media_usage=$(df "$MEDIA_MOUNT" | awk 'NR==2 {print $5}' | tr -d '%')
     if [ "$media_usage" -gt "$THRESH_DISK_MEDIA_CRITICAL" ]; then
         ISSUES+=("Media drive at ${media_usage}%")
     fi
 else
-    ISSUES+=("Media drive /mnt/Media not mounted")
+    ISSUES+=("Media drive $MEDIA_MOUNT not mounted")
 fi
 
 # Check memory
@@ -149,15 +150,15 @@ done
 
 # Check Plex connectivity (skip remaining Plex checks if service is already down)
 if [ "$PLEX_DOWN" = false ]; then
-    if ! curl -s --max-time 5 -o /dev/null "http://localhost:32400/identity"; then
-        ISSUES+=("Plex not responding on port 32400")
+    if ! curl -s --max-time 5 -o /dev/null "$PLEX_URL/identity"; then
+        ISSUES+=("Plex not responding at $PLEX_URL")
         PLEX_DOWN=true
     fi
 fi
 
 # Check Plex token validity (only if Plex is reachable)
 if [ "$PLEX_DOWN" = false ] && [ -n "$PLEX_TOKEN" ]; then
-    plex_resp=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "http://localhost:32400/library/sections?X-Plex-Token=$PLEX_TOKEN")
+    plex_resp=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$PLEX_URL/library/sections?X-Plex-Token=$PLEX_TOKEN")
     if [ "$plex_resp" == "401" ]; then
         ISSUES+=("Plex token is invalid (401 Unauthorized)")
     fi
