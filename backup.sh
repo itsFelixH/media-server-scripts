@@ -104,10 +104,11 @@ echo
 mkdir -p "$BACKUP_DIR"
 mkdir -p "$REPORTS_DIR"
 
-# Check if media drive is mounted
-if ! mountpoint -q /mnt/Media; then
-    echo "[✗] /mnt/Media is not mounted. Backup aborted."
-    send_discord "$DISCORD_ALERTS" "❌ Backup Failed" "/mnt/Media is not mounted. Backup aborted." "16711680"
+# Check if backup drive is mounted
+BACKUP_MOUNT=$(df "$BACKUP_DIR" 2>/dev/null | awk 'NR==2 {print $6}')
+if [ "$BACKUP_MOUNT" = "/" ] && [[ "$BACKUP_DIR" == /mnt/* || "$BACKUP_DIR" == /media/* ]]; then
+    echo "[✗] Backup destination $BACKUP_DIR is not mounted. Backup aborted."
+    send_discord "$DISCORD_ALERTS" "❌ Backup Failed" "Backup destination $BACKUP_DIR is not mounted. Backup aborted." "16711680"
     exit 1
 fi
 
