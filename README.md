@@ -54,6 +54,8 @@ All scripts load settings from `config.yml` via the shared `config.sh` loader. T
 
 Copy `config.yml.template` to `config.yml` and fill in your values. Below is what each script needs, sorted by importance.
 
+> **Using a single script?** You only need to fill in the keys listed under that script's section (plus the Global keys). Leave everything else empty or remove it — `config.sh` won't fail on missing optional keys, it just uses defaults or skips those checks.
+
 ### Global (used by all scripts)
 
 | Key | Required | Description |
