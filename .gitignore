@@ -1,0 +1,8 @@
+# Logs
+logs/
+
+# Reports (generated each run)
+reports/
+
+# Sensitive config (contains API keys, tokens, webhooks)
+config.yml
