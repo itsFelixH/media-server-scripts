@@ -1,339 +1,152 @@
-# Scripts
+# media-server-scripts
 
-Server-level maintenance and management scripts for the Plex media stack.
+Maintenance and monitoring scripts for a Plex media server stack running on a Raspberry Pi (or any Linux box). Handles health checks, backups, library reporting, media analysis, and scheduled maintenance — all with Discord notifications.
 
-[Back to main README](../README.md)
-
-## Scripts
-
-| Script | Purpose | Usage |
-|--------|---------|-------|
-| `config.yml` | Shared configuration (paths, API keys, webhooks, thresholds) | Sourced by all scripts via `config.sh` |
-| `config.sh` | Configuration loader (parses `config.yml` into shell variables) | `source "$SCRIPTS_DIR/config.sh"` |
-| `maintenance.sh` | Interactive server maintenance menu | `bash ~/kometa/scripts/maintenance.sh` |
-| `runkometa.sh` | Interactive Kometa runner with library/mode selection | `bash ~/kometa/scripts/runkometa.sh` |
-| `backup.sh` | Weekly config backup to media drive | `bash ~/kometa/scripts/backup.sh` |
-| `healthcheck.sh` | Silent health check, alerts on failure | `bash ~/kometa/scripts/healthcheck.sh` |
-| `media-analyzer.sh` | Analyze video files by codec, resolution, size | `bash ~/kometa/scripts/media-analyzer.sh [mode] [dir]` |
-| `storage-report.sh` | Storage usage report with resolution and codec breakdown | `bash ~/kometa/scripts/storage-report.sh [dir]` |
-| `metadata-audit.sh` | Check metadata files against library content | `bash ~/kometa/scripts/metadata-audit.sh` |
-| `library-catalog.sh` | Generate library snapshot with diff and Discord | `bash ~/kometa/scripts/library-catalog.sh` |
-| `encode-queue.sh` | Generate prioritized re-encode list | `bash ~/kometa/scripts/encode-queue.sh [dir...]` |
-
-## Shared Configuration
-
-All scripts source `config.sh` which parses `config.yml` into shell variables. This centralizes:
-
-- **API keys & tokens**: Plex, TMDb, MDBList, Radarr, Sonarr, Trakt, GitHub
-- **Discord webhooks**: alerts and notifications channels
-- **Paths**: all media, config, and log directories
-- **Services**: systemd services and Docker container names
-- **Thresholds**: disk, memory, temperature, and staleness limits
-- **Retention**: log rotation periods
-- **Defaults**: per-script default values (directories, limits, ratios)
-
-To use in a script:
-```bash
-SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPTS_DIR/config.sh"
-```
-
-⚠️ `config.yml` contains secrets — do not commit to public repositories.
-
-## media-analyzer.sh
-
-Scans all video files in a media directory, probes each for codec and resolution, and filters results by mode. Posts a summary to Discord and logs all output. Supports scanning multiple directories in one run.
-
-### Modes
-
-| Mode | Description |
-|------|-------------|
-| `all` | Full analysis of all video files (default) |
-| `non-hevc` | Files that are NOT HEVC/x265 |
-| `hevc` | Files that ARE HEVC/x265 |
-| `av1` | AV1 encoded files |
-| `h264` | H.264/x264 encoded files |
-| `non-hd` | Files below 720p (excludes unknown) |
-| `4k` | 4K/2160p+ files |
-| `large` | Files larger than threshold (default 5GB) |
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help message |
-| `-q`, `--quiet` | Suppress terminal output (log only, useful for cron) |
-| `--no-discord` | Skip Discord notification |
-| `--include-unknown` | Include files with unknown resolution in `non-hd` mode |
-
-### Examples
+## Quick Start
 
 ```bash
-# Find all non-HEVC files in Movies
-./media-analyzer.sh non-hevc "/mnt/Media/Movies"
+# 1. Clone the repo
+git clone git@github.com:itsFelixH/media-server-scripts.git ~/kometa/scripts
+cd ~/kometa/scripts
 
-# Find AV1 files in TV Shows (default directory)
-./media-analyzer.sh av1
+# 2. Create your config from the template
+cp config.yml.template config.yml
 
-# Scan both libraries at once
-./media-analyzer.sh all "/mnt/Media/TV Shows" "/mnt/Media/Movies"
+# 3. Fill in your values (see Configuration section below)
+nano config.yml
 
-# Find files over 10GB, quiet mode for cron
-THRESHOLD_GB=10 ./media-analyzer.sh --quiet large "/mnt/Media/TV Shows"
-
-# Full analysis without Discord notification
-./media-analyzer.sh --no-discord all "/mnt/Media/Movies"
+# 4. Test a script
+bash healthcheck.sh
 ```
 
-### Output
-
-- Terminal: summary stats, top 20 matches by size, full codec/resolution breakdown (bucketed: 4K, Full HD, HD, SD)
-- Log: `~/kometa/scripts/logs/media-analyzer/media-analyzer_YYYYMMDD_HHMMSS.log` (auto-rotated after 30 days by maintenance)
-- Report: `~/kometa/scripts/reports/media-analysis.md` (overwritten each run) — summary + codec/resolution distributions + matched files (when using a filter mode)
-- Discord (`#notifications`): mode, file counts, codec/resolution breakdown, top 10 matches
-- Reports probe failures (files where ffprobe couldn't determine codec/resolution)
-
-### Dependencies
-
-Required: `ffprobe` (ffmpeg), `jq`, `curl`
-
-## storage-report.sh
-
-Scans a media directory and generates a detailed storage usage report. Reports folder sizes, resolution, codec, and file count for every folder (including individual seasons for TV shows). Auto-detects TV (show/season) vs Movies (flat) structure. Compares against previous run to track storage growth.
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help message |
-| `-q`, `--quiet` | Suppress terminal output (log only, useful for cron) |
-| `--no-discord` | Skip Discord notification |
-
-### Examples
-
-```bash
-# Scan TV Shows (default)
-./storage-report.sh
-
-# Scan Movies
-./storage-report.sh "/mnt/Media/Movies"
-
-# Quiet mode for cron
-./storage-report.sh --quiet "/mnt/Media/TV Shows"
-```
-
-### Output
-
-- Terminal: per-folder breakdown, resolution/codec summaries, progress indicator
-- Report: `~/kometa/scripts/reports/storage-report.md` (overwritten each run) — summary, resolution/codec breakdowns, all folders with sizes, comparison with previous run
-- Previous: `~/kometa/scripts/reports/storage-report.prev.md` (for diffing)
-- Log: `~/kometa/scripts/logs/storage-report/storage-report_YYYYMMDD_HHMMSS.log` (auto-rotated after 30 days by maintenance)
-- Discord (`#notifications`): summary table, resolution/codec breakdown, growth since last run
-
-### Dependencies
-
-Required: `ffprobe` (ffmpeg), `jq`, `curl`
-
-## metadata-audit.sh
-
-Checks Kometa metadata files in `config/metadata/` against actual library content. Identifies orphaned entries, missing metadata, duplicates, and season/episode gaps.
-
-### Checks
-
-- Orphaned metadata: entries for movies/shows not in your library (resolved to names via TMDb API comments)
-- Missing metadata: library items without custom poster/background entries
-- Duplicate entries across metadata files
-- Season/episode coverage: compares metadata episode counts vs files on disk
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help message |
-| `-q`, `--quiet` | Suppress terminal output (log only) |
-| `--no-discord` | Skip Discord notification |
-
-### Examples
-
-```bash
-./metadata-audit.sh                  # full validation
-./metadata-audit.sh --no-discord     # skip Discord
-```
-
-### Output
-
-- Terminal: per-check results, summary with issue/warning counts
-- Report: `~/kometa/scripts/reports/metadata-audit.md` (overwritten each run) — summary, issues, orphaned/missing entries, season gaps, comparison with previous run
-- Previous: `~/kometa/scripts/reports/metadata-audit.prev.md` (for diffing)
-- Log: `~/kometa/scripts/logs/metadata-audit/metadata-audit_YYYYMMDD.log`
-- Discord: errors to `#server-alerts`, warnings to `#notifications`
-
-### Dependencies
-
-Required: `python3`, `python3-yaml`, `jq`, `curl`
-
-## library-catalog.sh
-
-Generates a markdown snapshot of the entire media library. Compares against the previous snapshot to show added/removed movies, shows, and new seasons. Posts a summary to Discord.
-
-### Features
-
-- Full movie and TV show listing with season/episode counts
-- Diff against previous run (added/removed movies, shows, and new seasons)
-- Markdown export for reference
-- Discord summary with change highlights
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help message |
-| `-q`, `--quiet` | Suppress terminal output (log only) |
-| `--no-discord` | Skip Discord notification |
-
-### Examples
-
-```bash
-./library-catalog.sh                    # generate catalog + diff + Discord
-./library-catalog.sh --quiet            # cron mode
-```
-
-### Output
-
-- Catalog: `~/kometa/scripts/reports/library-catalog.md` (overwritten each run) — summary, all movies, all TV shows, changes since last run
-- Previous: `~/kometa/scripts/reports/library-catalog.prev.md` (for diffing)
-- Log: `~/kometa/scripts/logs/library-catalog/library-catalog_YYYYMMDD_HHMMSS.log`
-- Discord (`#notifications`): library totals, changes since last run, new additions
-
-### Dependencies
-
-Required: `jq`, `curl`
-
-## encode-queue.sh
-
-Scans for non-HEVC/non-AV1 video files and generates a prioritized re-encode list. Scans both Movies and TV Shows by default. Groups results by show/movie, sorted by total size. Estimates space savings based on typical HEVC compression ratios. Does NOT perform any encoding.
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help message |
-| `-q`, `--quiet` | Suppress terminal output (log only) |
-| `--no-discord` | Skip Discord notification |
-| `--limit=N` | Limit output to N files (default: 50) |
-| `--min-size=N` | Minimum file size in GB to include (default: 1) |
-
-### Examples
-
-```bash
-./encode-queue.sh                                    # Both libraries, files >1GB
-./encode-queue.sh "/mnt/Media/Movies"                # Movies only
-./encode-queue.sh --min-size=2 --limit=20            # Only >2GB, top 20
-```
-
-### Output
-
-- Terminal: summary stats, ranked queue with estimated savings per file
-- Report: `~/kometa/scripts/reports/encode-queue.md` (overwritten each run) — summary, queue ranked by size, grouped by show/movie
-- Log: `~/kometa/scripts/logs/encode-queue/encode-queue_YYYYMMDD_HHMMSS.log`
-- Discord (`#notifications`): file count, total size, estimated savings, top candidates
-
-### Dependencies
-
-Required: `ffprobe` (ffmpeg), `jq`, `curl`
-
-## healthcheck.sh
-
-Silent automated health check. Runs every 15 minutes via cron. Only sends a Discord alert when something is wrong.
-
-### What it checks
-
-- Systemd services (Plex, Radarr, Sonarr, Bazarr)
-- Docker containers running and healthy
-- Root disk usage (alerts > 90%)
-- Media drive mounted and usage (alerts > 95%)
-- Memory usage (alerts > 95%)
-- CPU temperature (alerts > 80°C)
-- Plex responding on port 32400
-- UMTK ran within the last 26 hours
-
-### Behavior
-
-- All healthy: exits silently, no notification
-- Issues found: sends one consolidated alert to `#server-alerts` with all problems listed
-
-### Log Location
-
-```
-~/kometa/scripts/logs/healthcheck/healthcheck_YYYYMMDD.log (daily, appended each run)
-```
-
-## backup.sh
-
-Weekly automated backup of all critical configuration files to `/mnt/Media/backups/`.
-
-### What gets backed up
-
-- Kometa configs (`config.yml`, `movies.yml`, `tv.yml`, `playlists.yml`)
-- Kometa metadata files (`config/metadata/` directory)
-- All scripts (maintenance, runkometa, backup, healthcheck, media-analyzer, storage-report, metadata-audit, library-catalog, encode-queue)
-- Library catalog snapshot (`library-catalog.md`)
-- UMTK configs (`config.yml`, `tssk_config.yml`)
-- ImageMaid config (`.env`)
-- All Docker compose files
-- WTWP database (`wtw.db`)
-
-### Schedule
-
-Runs every Sunday at 01:00 via crontab. Keeps 30 days of backups.
-
-### Backup Location
-
-```
-/mnt/Media/backups/plex-config-YYYYMMDD.zip
-```
-
-### Log Location
-
-```
-~/kometa/scripts/logs/backup/backup_YYYYMMDD_HHMMSS.log
-```
-
-### Manual Run
-
-```bash
-bash ~/kometa/scripts/backup.sh
-```
-
-### Restore
-
-```bash
-tar -xzf /mnt/Media/backups/plex-config-YYYYMMDD.tar.gz -C ~/
-```
-
-## maintenance.sh
-
-Full interactive maintenance menu for the entire stack. Includes:
-
-- System updates (apt upgrade)
-- Media tools updates (PlexTraktSync)
-- Docker container updates (pull and restart all containers)
-- Service status checks (Plex, Radarr, Sonarr, Bazarr)
-- Docker container monitoring (kometa, umtk, wtwp, imagemaid)
-- Config validation (YAML syntax for Kometa, UMTK, TSSK, ImageMaid)
-- Disk usage and mount checks
-- Network and DNS diagnostics
-- Temperature monitoring
-- Discord webhook notifications (optional)
-
-### Menu Options
+## Requirements
+
+- **OS**: Linux (tested on Raspberry Pi OS / Debian)
+- **Shell**: Bash
+- **Core tools**: `jq`, `curl`
+- **Media analysis**: `ffprobe` (from ffmpeg)
+- **Metadata audit**: `python3`, `python3-yaml`
+- **Docker**: For container management (Kometa, UMTK, etc.)
+- **systemd**: For service monitoring (Plex, Radarr, Sonarr)
+
+## Scripts Overview
+
+| Script | Purpose | Schedule |
+|--------|---------|----------|
+| `healthcheck.sh` | Monitor services, disk, memory, temperature, APIs | Every 30 min |
+| `maintenance.sh` | System updates, Docker updates, log rotation, diagnostics | Mondays 03:00 |
+| `backup.sh` | Archive all configs to media drive | Sundays 01:00 |
+| `library-catalog.sh` | Snapshot library contents with diff tracking | Sundays 01:30 |
+| `metadata-audit.sh` | Validate metadata files against library | Sundays 02:00 |
+| `encode-queue.sh` | Find re-encoding candidates | 1st of month |
+| `storage-report.sh` | Disk usage breakdown by folder/codec/resolution | 28th of month |
+| `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
+| `runkometa.sh` | Interactive Kometa runner with library/mode selection | Manual |
+
+All scripts support `-h`/`--help` and `--no-discord`.  
+Scripts with terminal output support `-q`/`--quiet` for cron use.
+
+---
+
+## Configuration
+
+All scripts load settings from `config.yml` via the shared `config.sh` loader. The config file is gitignored (contains secrets).
+
+Copy `config.yml.template` to `config.yml` and fill in your values. Below is what each script needs, sorted by importance.
+
+### Global (used by all scripts)
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `server.hostname` | ✅ | Shown in Discord messages |
+| `discord.alerts` | ✅ | Webhook URL for `#server-alerts` |
+| `discord.notifications` | ✅ | Webhook URL for `#notifications` |
+| `paths.logs` | ✅ | Where scripts write logs |
+| `paths.reports` | ✅ | Where reports are saved |
+| `notifications.footer_prefix` | ❌ | Discord embed footer (defaults to hostname) |
+| `discord.description_limit` | ❌ | Max embed chars (default: 4000) |
+| `discord.content_limit` | ❌ | Max content chars (default: 1900) |
+
+---
+
+<details>
+<summary><strong>healthcheck.sh</strong> — services, containers, disk, memory, Plex API</summary>
+
+Runs silently. Only alerts Discord when something is wrong. Auto-restarts failed Docker containers.
+
+#### Config entries
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `plex.token` | ✅ | Validates Plex API access |
+| `services.plex` | ✅ | systemd service name to monitor |
+| `services.arr` | ✅ | List of arr services to check |
+| `services.docker_containers` | ✅ | Containers to monitor/auto-restart |
+| `paths.kometa_config` | ✅ | Checks Kometa last-run log |
+| `paths.umtk_logs` | ✅ | Checks UMTK last-run time |
+| `api_keys.radarr` | ❌ | If set, checks Radarr API health |
+| `api_keys.sonarr` | ❌ | If set, checks Sonarr API health |
+| `thresholds.disk_root_critical` | ❌ | Root disk % alert (default: 90) |
+| `thresholds.disk_media_critical` | ❌ | Media drive % alert (default: 95) |
+| `thresholds.memory_critical` | ❌ | RAM % alert (default: 95) |
+| `thresholds.temperature_critical` | ❌ | CPU °C alert (default: 80) |
+| `thresholds.container_restart_warn` | ❌ | Restart count before alert (default: 3) |
+| `thresholds.task_stale_minutes` | ❌ | Minutes before task is "stale" (default: 1560 ≈ 26h) |
+
+#### What it checks
+
+- systemd services (Plex, Radarr, Sonarr, Bazarr)
+- Docker containers running + healthy
+- Root disk and media drive usage
+- RAM and swap usage
+- CPU temperature
+- Plex API responding + token valid
+- Radarr/Sonarr API responding
+- Internet + TMDb reachability
+- UMTK, Kometa, PlexTraktSync last run times
+
+#### Behavior
+
+- All healthy → silent exit, one-line heartbeat in log
+- Issues found → consolidated Discord alert to `#server-alerts`
+- Same issues as last run → no repeat alert (deduplication)
+- Issues resolved → recovery notification with strikethrough list
+
+</details>
+
+<details>
+<summary><strong>maintenance.sh</strong> — system updates, Docker, log rotation, diagnostics</summary>
+
+Interactive menu with 11 maintenance tasks. Also runs unattended via `--scheduled`.
+
+#### Config entries
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `services.plex` | ✅ | Service to check/restart |
+| `services.arr` | ✅ | Services to check/restart |
+| `services.docker_containers` | ✅ | Containers to update/restart |
+| `paths.kometa_config` | ✅ | Config validation target |
+| `paths.umtk_config` | ✅ | Config validation target |
+| `paths.umtk_logs` | ✅ | Log rotation target |
+| `paths.imagemaid_config` | ✅ | Config validation target |
+| `paths.wtwp_data` | ✅ | WTWP data directory |
+| `retention.logs_days` | ❌ | Delete logs older than N days (default: 30) |
+| `retention.umtk_logs_days` | ❌ | UMTK log retention (default: 14) |
+| `retention.plextraktsync_days` | ❌ | PTS log retention (default: 14) |
+| `thresholds.disk_root_warn` | ❌ | Disk warning % (default: 80) |
+| `thresholds.disk_root_critical` | ❌ | Disk critical % (default: 90) |
+| `thresholds.temperature_warn` | ❌ | Temp warning °C (default: 70) |
+| `thresholds.temperature_critical` | ❌ | Temp critical °C (default: 80) |
+
+#### Menu options
 
 ```
  1: System Maintenance       (apt update/upgrade/autoremove)
  2: Update Media Tools       (PlexTraktSync self-update)
  3: Update Docker Containers (pull latest images, restart)
- 4: Restart Services         (Plex, Radarr, Sonarr, Bazarr, Docker containers)
- 5: Disk Maintenance         (clean old logs, rotate logs, show usage)
+ 4: Restart Services         (Plex, arr services, Docker containers)
+ 5: Disk Maintenance         (clean old logs, show usage)
  6: Health Check             (services, disk, memory, load, connectivity)
  7: Temperature Check        (thermal zones)
  8: Network Check            (TMDb, Trakt, DNS)
@@ -342,80 +155,243 @@ Full interactive maintenance menu for the entire stack. Includes:
 11: Token Consistency Check  (compare Plex token across configs)
 ```
 
-### Scheduled Mode
-
-Run unattended with `--scheduled` flag. Executes: system maintenance, media tools update, Docker container updates, config validation, token consistency check, and disk maintenance (including log rotation).
+#### Scheduled mode
 
 ```bash
-# Manual scheduled run
-bash ~/kometa/scripts/maintenance.sh --scheduled
-
-# Runs automatically every Monday at 03:00 via crontab
+bash maintenance.sh --scheduled
 ```
 
-### Log Rotation (handled by disk maintenance)
+Runs tasks 1, 2, 3, 5, 10, 11 unattended. Sends summary to Discord.
 
-- All script logs (`*.log` in `~/kometa/scripts/logs/*/`): deleted after 30 days
-- PlexTraktSync daily logs: deleted after 14 days
-- UMTK logs: deleted after 14 days
-- Kometa logs: deleted after 30 days
-- Reports (`~/kometa/scripts/reports/*.md`): overwritten each run (no rotation needed)
+</details>
 
-### Log Location
+<details>
+<summary><strong>backup.sh</strong> — config archival with retention</summary>
+
+Creates a zip archive of all critical configs and scripts. Manages retention automatically.
+
+#### Config entries
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `paths.backups` | ✅ | Destination directory for archives |
+| `paths.kometa_config` | ✅ | Kometa configs to back up |
+| `paths.metadata` | ✅ | Metadata YAML files |
+| `paths.umtk_config` | ✅ | UMTK configs |
+| `paths.imagemaid_config` | ✅ | ImageMaid config |
+| `paths.reports_archive` | ❌ | Archived reports location |
+| `retention.backups_days` | ❌ | Keep backups for N days (default: 30) |
+
+#### What gets backed up
+
+- Kometa configs (`config.yml`, `movies.yml`, `tv.yml`, `playlists.yml`)
+- Kometa metadata files
+- All scripts in this repo
+- UMTK configs
+- ImageMaid config
+- Docker compose files
+- WTWP database
+- Library catalog snapshot
+
+#### Output
 
 ```
-~/kometa/scripts/logs/maintenance/maintenance_YYYYMMDD_HHMMSS.log
+/mnt/Media/backups/plex-config-YYYYMMDD.zip
 ```
 
-### Dependencies
+</details>
 
-Auto-installed: `jq`, `bc`
+<details>
+<summary><strong>library-catalog.sh</strong> — library snapshot with diff tracking</summary>
 
-Optional (warns if missing): `curl`, `nslookup` (dnsutils), `python3`, `python3-yaml`, `lsb_release`
+Generates a full markdown listing of all movies and TV shows. Compares against the previous run to highlight additions and removals.
 
-## runkometa.sh
+#### Config entries
 
-Interactive menu for running Kometa inside its Docker container with different options:
+| Key | Required | Description |
+|-----|----------|-------------|
+| `paths.movies` | ✅ | Movies library root directory |
+| `paths.tv_shows` | ✅ | TV Shows library root directory |
+| `plex.token` | ✅ | Plex API access for metadata |
+| `plex.url` | ✅ | Plex server URL |
+
+#### Output
+
+- Report: `reports/library-catalog.md` (overwritten each run)
+- Previous: `reports/library-catalog.prev.md` (for diffing)
+- Discord: library totals + changes since last run
+
+</details>
+
+<details>
+<summary><strong>metadata-audit.sh</strong> — validate metadata against library</summary>
+
+Checks Kometa metadata YAML files against actual library content. Finds orphaned entries, missing metadata, duplicates, and season/episode gaps.
+
+#### Config entries
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `paths.metadata` | ✅ | Kometa metadata YAML directory |
+| `paths.movies` | ✅ | Movies library root |
+| `paths.tv_shows` | ✅ | TV Shows library root |
+
+#### What it checks
+
+- Orphaned metadata (entries for content not in library)
+- Missing metadata (library items without custom entries)
+- Duplicate entries across files
+- Season/episode coverage gaps
+
+#### Dependencies
+
+`python3`, `python3-yaml`, `jq`, `curl`
+
+</details>
+
+<details>
+<summary><strong>encode-queue.sh</strong> — find re-encoding candidates</summary>
+
+Scans for non-HEVC/non-AV1 files and generates a prioritized re-encode list sorted by size. Estimates space savings. Does NOT perform any encoding.
+
+#### Config entries
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `paths.movies` | ✅ | Default scan directory |
+| `paths.tv_shows` | ✅ | Default scan directory |
+| `encode_queue.limit` | ❌ | Max items to list (default: 50) |
+| `encode_queue.min_size_gb` | ❌ | Minimum file size in GB (default: 1) |
+| `encode_queue.hevc_ratio` | ❌ | Estimated HEVC size as % of original (default: 45) |
+
+#### Usage
+
+```bash
+./encode-queue.sh                              # Both libraries, files >1GB
+./encode-queue.sh "/mnt/Media/Movies"          # Movies only
+./encode-queue.sh --min-size=2 --limit=20      # Only >2GB, top 20
+```
+
+#### Dependencies
+
+`ffprobe` (ffmpeg), `jq`, `curl`
+
+</details>
+
+<details>
+<summary><strong>storage-report.sh</strong> — disk usage by folder, codec, resolution</summary>
+
+Scans a media directory and generates a detailed storage report. Auto-detects TV (show/season) vs Movies (flat) structure. Compares against previous run.
+
+#### Config entries
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `paths.tv_shows` | ✅ | Default scan directory |
+
+#### Usage
+
+```bash
+./storage-report.sh                            # TV Shows (default)
+./storage-report.sh "/mnt/Media/Movies"        # Movies
+```
+
+#### Dependencies
+
+`ffprobe` (ffmpeg), `jq`, `curl`
+
+</details>
+
+<details>
+<summary><strong>media-analyzer.sh</strong> — filter/analyze video files</summary>
+
+Scans video files, probes each for codec and resolution, filters by mode. Supports scanning multiple directories.
+
+#### Config entries
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `media_analyzer.default_directory` | ❌ | Default scan path (default: TV Shows) |
+| `media_analyzer.threshold_gb` | ❌ | Size threshold for `large` mode (default: 5) |
+| `media_analyzer.min_bitrate_kbps` | ❌ | Low-bitrate threshold (default: 1000) |
+
+#### Modes
+
+| Mode | Description |
+|------|-------------|
+| `all` | Full analysis (default) |
+| `non-hevc` | Files NOT encoded in HEVC/x265 |
+| `hevc` | HEVC/x265 files only |
+| `av1` | AV1 files only |
+| `h264` | H.264/x264 files only |
+| `non-hd` | Below 720p |
+| `4k` | 2160p+ files |
+| `large` | Files exceeding size threshold |
+
+#### Usage
+
+```bash
+./media-analyzer.sh non-hevc "/mnt/Media/Movies"
+./media-analyzer.sh av1
+./media-analyzer.sh all "/mnt/Media/TV Shows" "/mnt/Media/Movies"
+./media-analyzer.sh --quiet large "/mnt/Media/TV Shows"
+```
+
+#### Dependencies
+
+`ffprobe` (ffmpeg), `jq`, `curl`
+
+</details>
+
+<details>
+<summary><strong>runkometa.sh</strong> — interactive Kometa runner</summary>
+
+Menu-driven interface for running Kometa inside its Docker container with different options.
+
+#### Config entries
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| (none beyond global) | — | Uses Docker directly |
+
+#### Options
 
 - Full run (all libraries)
 - Ignore schedules
-- Per-library runs (Movies / TV Shows)
-- Per-mode runs (metadata, collections, overlays)
+- Per-library (Movies / TV Shows)
+- Per-mode (metadata, collections, overlays)
 - Delete all collections
 
-Uses `docker exec` to run inside the container.
+</details>
 
-## Crontab
+---
 
-Current cron jobs for user `felix`:
+## Crontab Setup
 
-```
-# Plex Trakt Sync (every 2 hours, daily log)
-0 */2 * * * $HOME/.local/bin/plextraktsync sync >> $HOME/kometa/scripts/logs/plextraktsync/plextraktsync_$(date +\%Y\%m\%d).log 2>&1
+Example cron entries (adjust paths to your install location):
 
-# Weekly config backup (Sundays at 01:00)
-0 1 * * 0 bash $HOME/kometa/scripts/backup.sh
-
-# Library catalog (Sundays at 01:30)
-30 1 * * 0 bash $HOME/kometa/scripts/library-catalog.sh --quiet
-
-# Metadata audit (Sundays at 02:00)
-0 2 * * 0 bash $HOME/kometa/scripts/metadata-audit.sh --quiet
-
+```cron
 # Health check (every 30 minutes)
-*/30 * * * * bash $HOME/kometa/scripts/healthcheck.sh
+*/30 * * * * bash ~/kometa/scripts/healthcheck.sh
 
-# Scheduled maintenance (Mondays at 03:00)
-0 3 * * 1 bash $HOME/kometa/scripts/maintenance.sh --scheduled
+# Weekly config backup (Sundays 01:00)
+0 1 * * 0 bash ~/kometa/scripts/backup.sh
 
-# Encode queue (1st of each month at 04:00)
-0 4 1 * * bash $HOME/kometa/scripts/encode-queue.sh --quiet
+# Library catalog (Sundays 01:30)
+30 1 * * 0 bash ~/kometa/scripts/library-catalog.sh --quiet
 
-# Storage report (28th of each month at 04:30)
-30 4 28 * * bash $HOME/kometa/scripts/storage-report.sh --quiet
+# Metadata audit (Sundays 02:00)
+0 2 * * 0 bash ~/kometa/scripts/metadata-audit.sh --quiet
+
+# Scheduled maintenance (Mondays 03:00)
+0 3 * * 1 bash ~/kometa/scripts/maintenance.sh --scheduled
+
+# Encode queue (1st of month 04:00)
+0 4 1 * * bash ~/kometa/scripts/encode-queue.sh --quiet
+
+# Storage report (28th of month 04:30)
+30 4 28 * * bash ~/kometa/scripts/storage-report.sh --quiet
 ```
-
-UMTK and ImageMaid schedules are managed inside their containers (not via system cron).
 
 ## Discord Notifications
 
@@ -423,7 +399,33 @@ Two channels with separate webhooks:
 
 | Channel | Purpose | Triggers |
 |---------|---------|----------|
-| `#server-alerts` | Errors and failures | Backup failed, container down, disk full, service crashed, health check failures, metadata-audit errors |
-| `#notifications` | Successful runs | Backup complete, containers updated, maintenance done, ImageMaid reports, media-analyzer results, storage reports, library catalog, encode queue |
+| `#server-alerts` | Failures and warnings | Health check failures, backup errors, container down, token mismatch |
+| `#notifications` | Successful runs | Backup complete, maintenance done, reports generated |
 
-Webhooks are configured centrally in `config.yml` and loaded by all scripts via `config.sh`.
+## File Structure
+
+```
+~/kometa/scripts/
+├── config.yml              # Your config (gitignored, contains secrets)
+├── config.yml.template     # Template with placeholder values
+├── config.sh               # Config loader (sources config.yml)
+├── healthcheck.sh
+├── maintenance.sh
+├── backup.sh
+├── runkometa.sh
+├── library-catalog.sh
+├── metadata-audit.sh
+├── media-analyzer.sh
+├── storage-report.sh
+├── encode-queue.sh
+├── logs/                   # Per-script log subdirectories (gitignored)
+│   ├── healthcheck/
+│   ├── maintenance/
+│   ├── backup/
+│   └── ...
+└── reports/                # Generated markdown reports (gitignored)
+```
+
+## License
+
+Personal project. Use at your own risk.
