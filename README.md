@@ -11,6 +11,7 @@ These scripts are built around the following services:
 | [Plex](https://www.plex.tv/) | Media streaming server | Always running | [Support](https://support.plex.tv/) |
 | [Kometa](https://github.com/Kometa-Team/Kometa) | Metadata, collections, and overlay management for Plex | Daily at 05:00 (internal scheduler) | [Wiki](https://kometa.wiki/en/latest/) |
 | [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) | Upcoming movies/TV shows + TV show status overlays for Kometa | Daily at 02:00 (Docker internal cron) | [Docs](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) |
+| [Pattrmm](https://github.com/InsertDisc/pattrmm) | Alternative to UMTK — returning/new series overlays for Kometa | Docker internal cron | [Docs](https://github.com/InsertDisc/pattrmm) |
 | [ImageMaid](https://github.com/Kometa-Team/ImageMaid) | Plex metadata image cleanup and DB optimization | Weekly Sundays at 07:00 (Docker internal) | [GitHub](https://github.com/Kometa-Team/ImageMaid) |
 | [Radarr](https://radarr.video/) | Movie management and downloads | Always running (systemd) | |
 | [Sonarr](https://sonarr.tv/) | TV show management and downloads | Always running (systemd) | |
@@ -458,9 +459,6 @@ Leave the webhook URLs empty in `config.yml` to disable notifications entirely, 
 
 - [Kometa](https://github.com/Kometa-Team/Kometa) — Metadata, collections, and overlays for Plex
 - [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) — Upcoming movies/TV shows + status overlays
+- [Pattrmm](https://github.com/InsertDisc/pattrmm) — Alternative to UMTK — returning/new series overlays
 - [ImageMaid](https://github.com/Kometa-Team/ImageMaid) — Plex image cleanup and DB optimization
 - [WTWP](https://github.com/netplexflix/What-to-watch-on-Plex) — Group swiping app to decide what to watch
-
-## License
-
-Personal project. Use at your own risk.
