@@ -1,0 +1,162 @@
+################################################################################
+##########                         SERVER                             ##########
+################################################################################
+
+# Host machine identification and locale
+server:
+  hostname: myserver                  # Machine hostname (used in Discord footers)
+  ip: 192.168.1.100                   # Local network IP address
+  user: username                      # Primary user account
+  timezone: Europe/Berlin             # System timezone
+
+################################################################################
+##########                          PLEX                              ##########
+################################################################################
+
+# Plex Media Server connection details
+# Different URLs are needed depending on where the connection originates:
+#   url:        Direct access from the host machine (localhost)
+#   url_docker: Access from Docker containers via host gateway
+#   url_kometa: Access from Kometa container (uses hostname)
+plex:
+  url: http://localhost:32400
+  url_docker: http://host.docker.internal:32400
+  url_kometa: http://myserver:32400
+  token: xxxxxxxxxxxxxxxxxxxx
+
+################################################################################
+##########                        API KEYS                            ##########
+################################################################################
+
+# Third-party service API keys
+api_keys:
+  tmdb: your_tmdb_api_key
+  mdblist: your_mdblist_api_key
+  radarr: your_radarr_api_key
+  sonarr: your_sonarr_api_key
+  github_pat: github_pat_xxxxxxxxxxxx
+
+################################################################################
+##########                         TRAKT                              ##########
+################################################################################
+
+# Trakt.tv OAuth application credentials
+trakt:
+  client_id: your_trakt_client_id
+  client_secret: your_trakt_client_secret
+
+################################################################################
+##########                        DISCORD                             ##########
+################################################################################
+
+# Discord webhook URLs and message limits
+# alerts:        #server-alerts channel (failures, critical warnings)
+# notifications: #notifications channel (successes, informational)
+discord:
+  alerts: https://discord.com/api/webhooks/your_alerts_webhook
+  notifications: https://discord.com/api/webhooks/your_notifications_webhook
+  description_limit: 4000             # Max chars in embed description field
+  content_limit: 1900                 # Max chars in plain content message
+
+################################################################################
+##########                         PATHS                              ##########
+################################################################################
+
+# Directory paths used across all scripts
+# Tilde (~) is expanded to $HOME at load time
+paths:
+  kometa_config: ~/kometa/config      # Kometa configuration root
+  scripts: ~/kometa/scripts           # Scripts directory (this repo)
+  logs: ~/kometa/scripts/logs         # Log root directory (per-script subdirs)
+  reports: ~/kometa/scripts/reports   # Markdown reports (flat, overwritten each run)
+  reports_archive: /mnt/Media/reports # Archived report snapshots (kept indefinitely)
+  metadata: ~/kometa/config/metadata  # Kometa metadata YAML files
+  movies: /mnt/Media/Movies           # Movies library root
+  tv_shows: /mnt/Media/TV Shows       # TV Shows library root
+  backups: /mnt/Media/backups         # Backup destination
+  umtk_config: ~/UMTK/config         # UMTK configuration directory
+  umtk_logs: ~/UMTK/config/logs      # UMTK log output
+  imagemaid_config: ~/ImageMaid/config  # ImageMaid configuration directory
+  wtwp_data: ~/WTWP/data             # WTWP persistent data
+
+################################################################################
+##########                       SERVICES                             ##########
+################################################################################
+
+# Managed services and containers
+# plex:              systemd service name for Plex
+# arr:               systemd services checked during health monitoring
+# docker_containers: containers managed by maintenance and health scripts
+services:
+  plex: plexmediaserver
+  arr:
+    - radarr
+    - sonarr
+    - bazarr
+  docker_containers:
+    - kometa
+    - umtk
+    - wtwp
+    - imagemaid
+
+################################################################################
+##########                      THRESHOLDS                            ##########
+################################################################################
+
+# Health check warning and critical thresholds
+# Scripts compare current values against these limits and alert accordingly
+thresholds:
+  disk_root_warn: 80                  # Root filesystem usage % (warning)
+  disk_root_critical: 90              # Root filesystem usage % (critical)
+  disk_media_critical: 95             # Media drive usage % (critical)
+  memory_critical: 95                 # RAM usage % (critical)
+  temperature_warn: 70                # CPU temperature °C (warning)
+  temperature_critical: 80            # CPU temperature °C (critical)
+  load_multiplier: 1                  # Load average multiplier (× CPU cores)
+  container_restart_warn: 3           # Container restart count before alerting
+  task_stale_minutes: 1560            # Minutes before a Kometa run is considered stale (~26h)
+
+################################################################################
+##########                       RETENTION                            ##########
+################################################################################
+
+# Log and backup retention policies
+# Files older than the specified number of days are deleted during maintenance
+retention:
+  logs_days: 30                       # Script logs retention
+  umtk_logs_days: 14                  # UMTK logs retention
+  backups_days: 30                    # Backup files retention
+  plextraktsync_days: 14              # PlexTraktSync daily log retention
+
+################################################################################
+##########                    MEDIA ANALYZER                          ##########
+################################################################################
+
+# Default settings for the media-analyzer.sh script
+# Identifies large files and low-bitrate encodes for review
+media_analyzer:
+  default_directory: /mnt/Media/TV Shows  # Directory to scan
+  threshold_gb: 5                     # Flag files larger than this (GB)
+  min_bitrate_kbps: 1000              # Flag files with bitrate below this (kbps)
+
+################################################################################
+##########                     ENCODE QUEUE                           ##########
+################################################################################
+
+# Default settings for the encode-queue.sh script
+# Identifies candidates for HEVC re-encoding
+encode_queue:
+  default_directory: /mnt/Media/TV Shows  # Directory to scan
+  limit: 50                           # Max items to list
+  min_size_gb: 1                      # Only consider files larger than this (GB)
+  hevc_ratio: 45                      # Estimated HEVC size as % of original
+
+################################################################################
+##########                     NOTIFICATIONS                          ##########
+################################################################################
+
+# Global notification preferences
+notifications:
+  notify_on_success: true             # Send Discord message on successful runs
+  notify_on_failure: true             # Send Discord message on failures
+  footer_prefix: myserver             # Prefix shown in Discord embed footers
