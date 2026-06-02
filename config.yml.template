@@ -42,7 +42,7 @@ media:
 tools:
   kometa: ~/kometa/config             # Kometa config root (config.yml, movies.yml, etc.)
   metadata: ~/kometa/config/metadata  # Kometa metadata YAML files
-  umtk: ~/UMTK/config                # UMTK config (logs assumed at <umtk>/logs/)
+  umtk: ~/UMTK/config                 # UMTK config (logs assumed at <umtk>/logs/)
   imagemaid: ~/ImageMaid/config       # ImageMaid config (.env file)
   compose_files:                      # Docker compose files to include in backups
     - ~/docker/kometa/docker-compose.yml
