@@ -59,7 +59,7 @@ else
 fi
 
 DATE=$(date +%Y%m%d)
-BACKUP_FILE="$BACKUP_DIR/plex-config-${DATE}.zip"
+BACKUP_FILE="$BACKUP_DIR/${SERVER_HOSTNAME}-backup-${DATE}.zip"
 KEEP_DAYS=$RETENTION_BACKUPS_DAYS
 
 ####### DEPENDENCY CHECK #######
@@ -116,14 +116,11 @@ TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
 # Create directory structure in temp location
-mkdir -p "$TEMP_DIR"/{kometa/{config,scripts},UMTK/config,ImageMaid/config,docker/{kometa,umtk,wtwp,imagemaid}}
+mkdir -p "$TEMP_DIR"/{kometa/{config,scripts},UMTK/config,ImageMaid/config,docker}
 
 # --- Kometa config ---
 echo "Collecting Kometa config..."
-cp "$KOMETA_CONFIG/config.yml" "$TEMP_DIR/kometa/config/" 2>/dev/null
-cp "$KOMETA_CONFIG/movies.yml" "$TEMP_DIR/kometa/config/" 2>/dev/null
-cp "$KOMETA_CONFIG/tv.yml" "$TEMP_DIR/kometa/config/" 2>/dev/null
-cp "$KOMETA_CONFIG/playlists.yml" "$TEMP_DIR/kometa/config/" 2>/dev/null
+cp "$KOMETA_CONFIG"/*.yml "$TEMP_DIR/kometa/config/" 2>/dev/null
 cp -r "$METADATA_DIR" "$TEMP_DIR/kometa/config/" 2>/dev/null
 
 # --- Scripts config ---
@@ -132,8 +129,7 @@ cp "$SCRIPTS_DIR/config.yml" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
 
 # --- UMTK/TSSK ---
 echo "Collecting UMTK config..."
-cp "$UMTK_CONFIG_DIR/config.yml" "$TEMP_DIR/UMTK/config/" 2>/dev/null
-cp "$UMTK_CONFIG_DIR/tssk_config.yml" "$TEMP_DIR/UMTK/config/" 2>/dev/null
+cp "$UMTK_CONFIG_DIR"/*.yml "$TEMP_DIR/UMTK/config/" 2>/dev/null
 
 # --- ImageMaid ---
 echo "Collecting ImageMaid config..."
@@ -141,10 +137,13 @@ cp "$IMAGEMAID_CONFIG_DIR/.env" "$TEMP_DIR/ImageMaid/config/" 2>/dev/null
 
 # --- Docker compose files ---
 echo "Collecting Docker compose files..."
-cp "$HOME/docker/kometa/docker-compose.yml" "$TEMP_DIR/docker/kometa/" 2>/dev/null
-cp "$HOME/docker/umtk/docker-compose.yml" "$TEMP_DIR/docker/umtk/" 2>/dev/null
-cp "$HOME/docker/wtwp/docker-compose.yml" "$TEMP_DIR/docker/wtwp/" 2>/dev/null
-cp "$HOME/docker/imagemaid/docker-compose.yml" "$TEMP_DIR/docker/imagemaid/" 2>/dev/null
+for container in "${DOCKER_CONTAINERS[@]}"; do
+    local_compose="$HOME/docker/$container/docker-compose.yml"
+    if [ -f "$local_compose" ]; then
+        mkdir -p "$TEMP_DIR/docker/$container"
+        cp "$local_compose" "$TEMP_DIR/docker/$container/" 2>/dev/null
+    fi
+done
 
 # --- Crontab ---
 echo "Collecting crontab..."
@@ -173,7 +172,7 @@ else
 fi
 
 # --- Cleanup old backups ---
-DELETED=$(find "$BACKUP_DIR" -name "plex-config-*.zip" -mtime +$KEEP_DAYS -delete -print | wc -l)
+DELETED=$(find "$BACKUP_DIR" -name "${SERVER_HOSTNAME}-backup-*.zip" -mtime +$KEEP_DAYS -delete -print | wc -l)
 if [ "$DELETED" -gt 0 ]; then
     echo "[✓] Cleaned up $DELETED old backup(s) (older than $KEEP_DAYS days)"
 fi
