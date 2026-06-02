@@ -19,7 +19,7 @@ Config Backup — Backs up all critical configuration files.
 Usage: backup.sh [options]
 
 Backs up Kometa, UMTK, ImageMaid, and Docker compose files
-to /mnt/Media/backups/plex-config-YYYYMMDD.zip
+to <backups>/<hostname>-backup-YYYYMMDD.zip
 
 Options:
   -h, --help        Show this help message
@@ -27,7 +27,7 @@ Options:
   --no-discord      Skip Discord notifications
 
 Schedule: Sundays at 01:00 via crontab
-Retention: 30 days
+Retention: configured via retention_days in config.yml
 HELP
 }
 
@@ -137,11 +137,12 @@ cp "$IMAGEMAID_CONFIG_DIR/.env" "$TEMP_DIR/ImageMaid/config/" 2>/dev/null
 
 # --- Docker compose files ---
 echo "Collecting Docker compose files..."
-for container in "${DOCKER_CONTAINERS[@]}"; do
-    local_compose="$HOME/docker/$container/docker-compose.yml"
-    if [ -f "$local_compose" ]; then
-        mkdir -p "$TEMP_DIR/docker/$container"
-        cp "$local_compose" "$TEMP_DIR/docker/$container/" 2>/dev/null
+for compose_path in "${COMPOSE_FILES[@]}"; do
+    if [ -f "$compose_path" ]; then
+        # Preserve directory context in the archive (use parent folder name)
+        dir_name=$(basename "$(dirname "$compose_path")")
+        mkdir -p "$TEMP_DIR/docker/$dir_name"
+        cp "$compose_path" "$TEMP_DIR/docker/$dir_name/" 2>/dev/null
     fi
 done
 
@@ -192,7 +193,7 @@ send_discord "$DISCORD_NOTIFICATIONS" "💾 Backup Complete" "⏱️ ${DURATION}
 
 **Config backup:**
 \`\`\`
-Archive: plex-config-${DATE}.zip
+Archive: ${SERVER_HOSTNAME}-backup-${DATE}.zip
 Size:    $SIZE
 Files:   $FILE_COUNT
 \`\`\`
