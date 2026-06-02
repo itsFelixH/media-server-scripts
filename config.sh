@@ -12,7 +12,7 @@
 #   Discord:    DISCORD_ALERTS, DISCORD_NOTIFICATIONS, DISCORD_DESC_LIMIT, DISCORD_CONTENT_LIMIT
 #   Paths:      KOMETA_CONFIG, SCRIPTS_DIR, LOG_DIR, REPORT_DIR, REPORTS_DIR, METADATA_DIR,
 #               MOVIES_DIR, TV_DIR, BACKUP_DIR,
-#               UMTK_CONFIG_DIR, UMTK_LOGS_DIR, IMAGEMAID_CONFIG_DIR, WTWP_DATA_DIR
+#               UMTK_CONFIG_DIR, UMTK_LOGS_DIR, IMAGEMAID_CONFIG_DIR
 #   Services:   PLEX_SERVICE, ARR_SERVICES (array), DOCKER_CONTAINERS (array)
 #   Thresholds: THRESH_DISK_ROOT_WARN, THRESH_DISK_ROOT_CRITICAL, THRESH_DISK_MEDIA_CRITICAL,
 #               THRESH_MEMORY_CRITICAL, THRESH_TEMP_CRITICAL, THRESH_TEMP_WARN,
@@ -107,22 +107,21 @@ API_KEY_SONARR="$(_cfg api_keys.sonarr)"
 # Discord
 DISCORD_ALERTS="$(_cfg discord.alerts)"
 DISCORD_NOTIFICATIONS="$(_cfg discord.notifications)"
-DISCORD_DESC_LIMIT="$(_cfg discord.description_limit 4000)"
-DISCORD_CONTENT_LIMIT="$(_cfg discord.content_limit 1900)"
+DISCORD_DESC_LIMIT=4000               # Discord embed description char limit (API constant)
+DISCORD_CONTENT_LIMIT=1900            # Discord content message char limit (safe max)
 
-# Paths
-KOMETA_CONFIG="$(_cfg paths.kometa_config)"
+# Paths (mapped from config.yml keys → script variable names)
+KOMETA_CONFIG="$(_cfg paths.kometa)"
 LOG_DIR="$(_cfg paths.logs)"
 REPORT_DIR="$(_cfg paths.reports)"
 REPORTS_DIR="$(_cfg paths.reports_archive)"
 METADATA_DIR="$(_cfg paths.metadata)"
 MOVIES_DIR="$(_cfg paths.movies)"
-TV_DIR="$(_cfg paths.tv_shows)"
+TV_DIR="$(_cfg paths.tv)"
 BACKUP_DIR="$(_cfg paths.backups)"
-UMTK_CONFIG_DIR="$(_cfg paths.umtk_config)"
-UMTK_LOGS_DIR="$(_cfg paths.umtk_logs)"
-IMAGEMAID_CONFIG_DIR="$(_cfg paths.imagemaid_config)"
-WTWP_DATA_DIR="$(_cfg paths.wtwp_data)"
+UMTK_CONFIG_DIR="$(_cfg paths.umtk)"
+UMTK_LOGS_DIR="$(_cfg paths.umtk)/logs"  # Derived: logs live inside UMTK config dir
+IMAGEMAID_CONFIG_DIR="$(_cfg paths.imagemaid)"
 
 # Services
 PLEX_SERVICE="$(_cfg services.plex "plexmediaserver")"
@@ -153,13 +152,13 @@ FOOTER_PREFIX="$(_cfg notifications.footer_prefix "$SERVER_HOSTNAME")"
 # Ensure log and report directories exist
 mkdir -p "$LOG_DIR" "$REPORT_DIR"
 
-# Media Analyzer defaults
-MEDIA_ANALYZER_DIR="$(_cfg media_analyzer.default_directory "$TV_DIR")"
-MEDIA_ANALYZER_THRESHOLD_GB="$(_cfg media_analyzer.threshold_gb 5)"
-MEDIA_ANALYZER_MIN_BITRATE="$(_cfg media_analyzer.min_bitrate_kbps 1000)"
+# Media Analyzer defaults (hardcoded — override via CLI flags in media-analyzer.sh)
+MEDIA_ANALYZER_DIR="$TV_DIR"
+MEDIA_ANALYZER_THRESHOLD_GB=5
+MEDIA_ANALYZER_MIN_BITRATE=1000
 
-# Encode Queue defaults
-ENCODE_QUEUE_DIR="$(_cfg encode_queue.default_directory "$TV_DIR")"
-ENCODE_QUEUE_LIMIT="$(_cfg encode_queue.limit 50)"
-ENCODE_QUEUE_MIN_SIZE_GB="$(_cfg encode_queue.min_size_gb 1)"
-ENCODE_QUEUE_HEVC_RATIO="$(_cfg encode_queue.hevc_ratio 45)"
+# Encode Queue defaults (hardcoded — override via CLI flags in encode-queue.sh)
+ENCODE_QUEUE_DIR="$TV_DIR"
+ENCODE_QUEUE_LIMIT=50
+ENCODE_QUEUE_MIN_SIZE_GB=1
+ENCODE_QUEUE_HEVC_RATIO=45
