@@ -17,8 +17,7 @@
 #   Thresholds: THRESH_DISK_ROOT_WARN, THRESH_DISK_ROOT_CRITICAL, THRESH_DISK_MEDIA_CRITICAL,
 #               THRESH_MEMORY_CRITICAL, THRESH_TEMP_CRITICAL, THRESH_TEMP_WARN,
 #               THRESH_CONTAINER_RESTART_WARN, THRESH_TASK_STALE_MIN
-#   Retention:  RETENTION_LOGS_DAYS, RETENTION_UMTK_LOGS_DAYS, RETENTION_BACKUPS_DAYS,
-#               RETENTION_PTS_DAYS
+#   Retention:  RETENTION_DAYS, RETENTION_SHORT_DAYS
 #   Notify:     NOTIFY_ON_SUCCESS, NOTIFY_ON_FAILURE, FOOTER_PREFIX
 #   Defaults:   MEDIA_ANALYZER_DIR, MEDIA_ANALYZER_THRESHOLD_GB, MEDIA_ANALYZER_MIN_BITRATE,
 #               ENCODE_QUEUE_DIR, ENCODE_QUEUE_LIMIT, ENCODE_QUEUE_MIN_SIZE_GB, ENCODE_QUEUE_HEVC_RATIO
@@ -107,10 +106,10 @@ API_KEY_SONARR="$(_cfg api_keys.sonarr)"
 # Discord
 DISCORD_ALERTS="$(_cfg discord.alerts)"
 DISCORD_NOTIFICATIONS="$(_cfg discord.notifications)"
-DISCORD_DESC_LIMIT=4000               # Discord embed description char limit (API constant)
-DISCORD_CONTENT_LIMIT=1900            # Discord content message char limit (safe max)
+DISCORD_DESC_LIMIT=4000               # Discord API constant
+DISCORD_CONTENT_LIMIT=1900            # Safe max for content messages
 
-# Paths (mapped from config.yml keys → script variable names)
+# Paths
 KOMETA_CONFIG="$(_cfg paths.kometa)"
 LOG_DIR="$(_cfg paths.logs)"
 REPORT_DIR="$(_cfg paths.reports)"
@@ -120,7 +119,7 @@ MOVIES_DIR="$(_cfg paths.movies)"
 TV_DIR="$(_cfg paths.tv)"
 BACKUP_DIR="$(_cfg paths.backups)"
 UMTK_CONFIG_DIR="$(_cfg paths.umtk)"
-UMTK_LOGS_DIR="$(_cfg paths.umtk)/logs"  # Derived: logs live inside UMTK config dir
+UMTK_LOGS_DIR="$(_cfg paths.umtk)/logs"
 IMAGEMAID_CONFIG_DIR="$(_cfg paths.imagemaid)"
 
 # Services
@@ -136,28 +135,29 @@ THRESH_MEMORY_CRITICAL="$(_cfg thresholds.memory_critical 95)"
 THRESH_TEMP_CRITICAL="$(_cfg thresholds.temperature_critical 80)"
 THRESH_TEMP_WARN="$(_cfg thresholds.temperature_warn 70)"
 THRESH_CONTAINER_RESTART_WARN="$(_cfg thresholds.container_restart_warn 3)"
-THRESH_TASK_STALE_MIN="$(_cfg thresholds.task_stale_minutes 1560)"
+THRESH_TASK_STALE_MIN=1560            # ~26h — alert if scheduled task hasn't run
 
-# Retention
-RETENTION_LOGS_DAYS="$(_cfg retention.logs_days 30)"
-RETENTION_UMTK_LOGS_DAYS="$(_cfg retention.umtk_logs_days 14)"
-RETENTION_BACKUPS_DAYS="$(_cfg retention.backups_days 30)"
-RETENTION_PTS_DAYS="$(_cfg retention.plextraktsync_days 14)"
+# Retention (single config value, applied uniformly)
+RETENTION_DAYS="$(_cfg retention_days 30)"
+RETENTION_LOGS_DAYS="$RETENTION_DAYS"
+RETENTION_BACKUPS_DAYS="$RETENTION_DAYS"
+RETENTION_UMTK_LOGS_DAYS="$RETENTION_DAYS"
+RETENTION_PTS_DAYS="$RETENTION_DAYS"
 
 # Notifications
-NOTIFY_ON_SUCCESS="$(_cfg notifications.notify_on_success true)"
-NOTIFY_ON_FAILURE="$(_cfg notifications.notify_on_failure true)"
-FOOTER_PREFIX="$(_cfg notifications.footer_prefix "$SERVER_HOSTNAME")"
+NOTIFY_ON_SUCCESS="$(_cfg notifications.on_success true)"
+NOTIFY_ON_FAILURE="$(_cfg notifications.on_failure true)"
+FOOTER_PREFIX="$SERVER_HOSTNAME"
 
 # Ensure log and report directories exist
 mkdir -p "$LOG_DIR" "$REPORT_DIR"
 
-# Media Analyzer defaults (hardcoded — override via CLI flags in media-analyzer.sh)
+# Media Analyzer defaults (override via CLI flags)
 MEDIA_ANALYZER_DIR="$TV_DIR"
 MEDIA_ANALYZER_THRESHOLD_GB=5
 MEDIA_ANALYZER_MIN_BITRATE=1000
 
-# Encode Queue defaults (hardcoded — override via CLI flags in encode-queue.sh)
+# Encode Queue defaults (override via CLI flags)
 ENCODE_QUEUE_DIR="$TV_DIR"
 ENCODE_QUEUE_LIMIT=50
 ENCODE_QUEUE_MIN_SIZE_GB=1
