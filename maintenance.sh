@@ -504,14 +504,6 @@ validate_configs() {
         echo "[✗] ImageMaid .env not found"
     fi
     
-    # Check WTWP data directory
-    local wtwp_data="$WTWP_DATA_DIR"
-    if [ -d "$wtwp_data" ]; then
-        echo "[✓] WTWP data directory exists"
-    else
-        echo "[✗] WTWP data directory not found"
-    fi
-    
     # Check log directory
     [ -d "$LOG_DIR" ] && echo "[✓] Log directory exists" || echo "[✗] Log directory missing"
 }
