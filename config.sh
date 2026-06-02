@@ -122,6 +122,11 @@ UMTK_CONFIG_DIR="$(_cfg paths.umtk)"
 UMTK_LOGS_DIR="$(_cfg paths.umtk)/logs"
 IMAGEMAID_CONFIG_DIR="$(_cfg paths.imagemaid)"
 
+# Compose files (list of paths to back up)
+mapfile -t COMPOSE_FILES < <(_cfg_list paths compose_files)
+# Expand ~ in each entry
+COMPOSE_FILES=("${COMPOSE_FILES[@]/#\~/$HOME}")
+
 # Services
 PLEX_SERVICE="$(_cfg services.plex "plexmediaserver")"
 mapfile -t ARR_SERVICES < <(_cfg_list services arr)
