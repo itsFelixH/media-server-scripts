@@ -137,14 +137,14 @@ PLEX_SERVICE="$(_cfg services.plex "plexmediaserver")"
 mapfile -t ARR_SERVICES < <(_cfg_list services arr)
 mapfile -t DOCKER_CONTAINERS < <(_cfg_list services docker_containers)
 
-# Thresholds
-THRESH_DISK_ROOT_WARN="$(_cfg thresholds.disk_root_warn 80)"
-THRESH_DISK_ROOT_CRITICAL="$(_cfg thresholds.disk_root_critical 90)"
-THRESH_DISK_MEDIA_CRITICAL="$(_cfg thresholds.disk_media_critical 95)"
-THRESH_MEMORY_CRITICAL="$(_cfg thresholds.memory_critical 95)"
-THRESH_TEMP_CRITICAL="$(_cfg thresholds.temperature_critical 80)"
-THRESH_TEMP_WARN="$(_cfg thresholds.temperature_warn 70)"
-THRESH_CONTAINER_RESTART_WARN="$(_cfg thresholds.container_restart_warn 3)"
+# Thresholds (hardcoded — sensible defaults for most systems)
+THRESH_DISK_ROOT_WARN=80
+THRESH_DISK_ROOT_CRITICAL=90
+THRESH_DISK_MEDIA_CRITICAL=95
+THRESH_MEMORY_CRITICAL=95
+THRESH_TEMP_CRITICAL=80
+THRESH_TEMP_WARN=70
+THRESH_CONTAINER_RESTART_WARN=3
 THRESH_TASK_STALE_MIN=1560            # ~26h — alert if scheduled task hasn't run
 
 # Retention (single config value, applied uniformly)
