@@ -1,7 +1,6 @@
 #!/bin/bash
 # Plex Media Server Stack - Config Backup
 # Backs up all critical configuration files to /mnt/Media/backups/
-# Archives report snapshots to /mnt/Media/reports/
 # Run weekly via crontab or maintenance script.
 #
 # Usage:
@@ -22,16 +21,13 @@ Usage: backup.sh [options]
 Backs up Kometa, UMTK, ImageMaid, and Docker compose files
 to /mnt/Media/backups/plex-config-YYYYMMDD.zip
 
-Report files (*.md from logs/) are archived separately to:
-  /mnt/Media/reports/ (with date timestamp: filename-YYYYMMDD.md)
-
 Options:
   -h, --help        Show this help message
   -q, --quiet       Suppress terminal output (log only)
   --no-discord      Skip Discord notifications
 
 Schedule: Sundays at 01:00 via crontab
-Retention: 30 days (config backups only; reports are kept indefinitely)
+Retention: 30 days
 HELP
 }
 
@@ -103,7 +99,6 @@ echo
 
 # Create backup directory if needed
 mkdir -p "$BACKUP_DIR"
-mkdir -p "$REPORTS_DIR"
 
 # Check if backup drive is mounted
 BACKUP_MOUNT=$(df "$BACKUP_DIR" 2>/dev/null | awk 'NR==2 {print $6}')
@@ -177,51 +172,6 @@ else
     exit 1
 fi
 
-# --- Archive reports (only if changed) ---
-echo
-echo "Archiving reports..."
-REPORT_COUNT=0
-REPORT_SKIPPED=0
-while IFS= read -r -d '' file; do
-    filename=$(basename "$file")
-    base_name="${filename%.*}"
-
-    # Create per-report subdirectory
-    report_dir="$REPORTS_DIR/$base_name"
-    mkdir -p "$report_dir"
-
-    # Extract generation date from the report (looks for "**Generated:** YYYY-MM-DD")
-    report_date=$(grep -oP '\*\*Generated:\*\*\s*\K[0-9]{4}-[0-9]{2}-[0-9]{2}' "$file" 2>/dev/null | head -1)
-    [ -z "$report_date" ] && report_date=$(date +%Y-%m-%d)
-
-    dest_file="$report_dir/${base_name}-${report_date}.md"
-
-    # Skip if identical to the latest archived version
-    latest_archived=$(find "$report_dir" -name "${base_name}-*.md" ! -name "latest.md" -type f 2>/dev/null | sort | tail -1)
-    if [ -n "$latest_archived" ] && diff -q "$file" "$latest_archived" >/dev/null 2>&1; then
-        ((REPORT_SKIPPED++))
-        continue
-    fi
-
-    # Skip if this exact date file already exists and is identical
-    if [ -f "$dest_file" ] && diff -q "$file" "$dest_file" >/dev/null 2>&1; then
-        ((REPORT_SKIPPED++))
-        continue
-    fi
-
-    cp "$file" "$dest_file" 2>/dev/null
-    ((REPORT_COUNT++))
-    echo "  [+] $base_name ($report_date)"
-done < <(find "$REPORT_DIR" -maxdepth 1 -name "*.md" ! -name "*.prev.md" -type f -print0)
-
-if [ "$REPORT_COUNT" -gt 0 ]; then
-    echo "[✓] Reports archived: $REPORT_COUNT new, $REPORT_SKIPPED unchanged (skipped)"
-elif [ "$REPORT_SKIPPED" -gt 0 ]; then
-    echo "[✓] Reports: $REPORT_SKIPPED unchanged (nothing to archive)"
-else
-    echo "[!] No report files found in $REPORT_DIR"
-fi
-
 # --- Cleanup old backups ---
 DELETED=$(find "$BACKUP_DIR" -name "plex-config-*.zip" -mtime +$KEEP_DAYS -delete -print | wc -l)
 if [ "$DELETED" -gt 0 ]; then
@@ -236,7 +186,6 @@ echo
 echo "=== Backup Complete ==="
 echo "Duration: ${DURATION}s"
 echo "Archive: $BACKUP_FILE ($SIZE)"
-echo "Reports: $REPORT_COUNT new, $REPORT_SKIPPED unchanged"
 echo "Log: $LOG_FILE"
 
 # Discord notification
@@ -249,5 +198,4 @@ Size:    $SIZE
 Files:   $FILE_COUNT
 \`\`\`
 
-**Reports:** $REPORT_COUNT new, $REPORT_SKIPPED unchanged
 **Old backups cleaned:** $DELETED" "3066993"
