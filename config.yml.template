@@ -33,33 +33,32 @@ api_keys:
 ##  2. PATHS                                                                  ##
 ################################################################################
 
-paths:
-  # Where your media files live
+# Media libraries (used by reports and analysis scripts)
+media:
   movies: /mnt/Media/Movies
   tv: /mnt/Media/TV Shows
 
-  # Kometa installation (contains config.yml, movies.yml, tv.yml, metadata/)
-  kometa: ~/kometa/config
-  metadata: ~/kometa/config/metadata
-
-  # Where scripts write their output
-  logs: ~/kometa/scripts/logs         # Per-script subdirs created automatically
-  reports: ~/kometa/scripts/reports   # Markdown reports, overwritten each run
-
-  # Backup & archive targets (typically on external/network storage)
-  backups: /mnt/Media/backups         # Config backup zip files
-  reports_archive: /mnt/Media/reports # Date-stamped report copies
-
-  # Companion tool config directories
-  umtk: ~/UMTK/config                # UMTK logs assumed at <umtk>/logs/
-  imagemaid: ~/ImageMaid/config
-
-  # Docker compose files to include in backups (full paths)
-  compose_files:
+# Tool installations (used by healthcheck, maintenance, backup)
+tools:
+  kometa: ~/kometa/config             # Kometa config root (config.yml, movies.yml, etc.)
+  metadata: ~/kometa/config/metadata  # Kometa metadata YAML files
+  umtk: ~/UMTK/config                # UMTK config (logs assumed at <umtk>/logs/)
+  imagemaid: ~/ImageMaid/config       # ImageMaid config (.env file)
+  compose_files:                      # Docker compose files to include in backups
     - ~/docker/kometa/docker-compose.yml
     - ~/docker/umtk/docker-compose.yml
     - ~/docker/wtwp/docker-compose.yml
     - ~/docker/imagemaid/docker-compose.yml
+
+# Where scripts write their output
+output:
+  logs: ~/kometa/scripts/logs         # Per-script subdirs created automatically
+  reports: ~/kometa/scripts/reports   # Markdown reports, overwritten each run
+
+# Backup & archive destinations (typically on external/network storage)
+backup:
+  configs: /mnt/Media/backups         # Config backup zip files
+  reports: /mnt/Media/reports         # Date-stamped report copies
 
 
 ################################################################################
