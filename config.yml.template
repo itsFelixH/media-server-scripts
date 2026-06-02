@@ -54,6 +54,13 @@ paths:
   umtk: ~/UMTK/config                # UMTK logs assumed at <umtk>/logs/
   imagemaid: ~/ImageMaid/config
 
+  # Docker compose files to include in backups (full paths)
+  compose_files:
+    - ~/docker/kometa/docker-compose.yml
+    - ~/docker/umtk/docker-compose.yml
+    - ~/docker/wtwp/docker-compose.yml
+    - ~/docker/imagemaid/docker-compose.yml
+
 
 ################################################################################
 ##  3. SERVICES                                                               ##
