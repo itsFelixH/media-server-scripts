@@ -80,7 +80,6 @@ services:
 ################################################################################
 
 # How long to keep logs and backups (days)
-# Short-lived logs (UMTK, PlexTraktSync) use half this value automatically
 retention_days: 30
 
 # Health check alert thresholds (percentage or count)
@@ -92,3 +91,8 @@ thresholds:
   temperature_warn: 70                # CPU °C
   temperature_critical: 80
   container_restart_warn: 3           # Docker restart count
+
+# Control which Discord messages are sent
+notifications:
+  on_success: true                    # Send embed on successful script runs
+  on_failure: true                    # Send embed on failures/warnings
