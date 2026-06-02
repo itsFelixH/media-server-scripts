@@ -90,5 +90,5 @@ retention_days: 30
 
 # Control which Discord messages are sent
 notifications:
-  on_success: true                    # Send embed on successful script runs
+  on_success: false                   # Send embed on successful script runs
   on_failure: true                    # Send embed on failures/warnings
