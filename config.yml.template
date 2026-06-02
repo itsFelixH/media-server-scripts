@@ -4,11 +4,11 @@
 #  Copy this file to config.yml and fill in your values.                       #
 #  Lines marked [REQUIRED] must be set. Everything else has sane defaults.     #
 #                                                                              #
-#  Sections are ordered by importance:                                         #
-#    1. Credentials & secrets (most likely to change per-install)              #
+#  Sections:                                                                   #
+#    1. Credentials & secrets (unique to your install)                         #
 #    2. Paths (adapt to your directory layout)                                 #
 #    3. Services (adapt to your stack)                                         #
-#    4. Tuning (thresholds, retention, defaults — rarely changed)              #
+#    4. Tuning (thresholds, retention — rarely changed)                        #
 ################################################################################
 
 
@@ -23,7 +23,7 @@ plex:
   token: xxxxxxxxxxxxxxxxxxxx         # X-Plex-Token (https://support.plex.tv/articles/204059436)
 
 # [OPTIONAL] Discord webhook URLs
-# Used by: ALL scripts (scripts work fine without Discord — notifications are simply skipped)
+# Used by: ALL scripts (scripts work fine without — notifications are simply skipped)
 # alerts:        failures, critical warnings → #server-alerts
 # notifications: successful runs, reports   → #notifications
 discord:
@@ -33,44 +33,39 @@ discord:
 # [OPTIONAL] Arr service API keys
 # Used by: healthcheck (skips check if empty)
 api_keys:
-  radarr: your_radarr_api_key        # Radarr API key (Settings → General)
-  sonarr: your_sonarr_api_key        # Sonarr API key (Settings → General)
+  radarr: your_radarr_api_key        # Settings → General → API Key
+  sonarr: your_sonarr_api_key        # Settings → General → API Key
 
 
 ################################################################################
 ##  2. PATHS — adapt to your directory layout                                 ##
 ################################################################################
 
-# [REQUIRED] Media library roots
-# Used by: library-catalog, metadata-audit, encode-queue, storage-report, media-analyzer
 paths:
-  movies: /mnt/Media/Movies           # Movies library root
-  tv_shows: /mnt/Media/TV Shows       # TV Shows library root
+  # [REQUIRED] Media library roots
+  # Used by: library-catalog, metadata-audit, encode-queue, storage-report, media-analyzer
+  movies: /mnt/Media/Movies
+  tv: /mnt/Media/TV Shows
 
-  # [REQUIRED] Kometa paths
+  # [REQUIRED] Kometa
   # Used by: healthcheck, maintenance, backup, metadata-audit
-  kometa_config: ~/kometa/config      # Kometa configuration root
+  kometa: ~/kometa/config             # Kometa configuration root
   metadata: ~/kometa/config/metadata  # Kometa metadata YAML files
 
-  # [REQUIRED] Script output paths
+  # [REQUIRED] Script output
   # Used by: ALL scripts
-  logs: ~/kometa/scripts/logs         # Log root (per-script subdirectories)
+  logs: ~/kometa/scripts/logs         # Log root (per-script subdirs created automatically)
   reports: ~/kometa/scripts/reports   # Markdown reports (overwritten each run)
 
-  # [REQUIRED] Backup destination
-  # Used by: backup
-  backups: /mnt/Media/backups         # Where backup archives are stored
+  # [REQUIRED] External destinations (on media/backup drive)
+  # Used by: backup, archive-reports
+  backups: /mnt/Media/backups         # Config backup archives (zip)
+  reports_archive: /mnt/Media/reports # Date-stamped report snapshots
 
-  # [REQUIRED] Companion tool paths
+  # [REQUIRED] Companion tools
   # Used by: healthcheck, maintenance, backup
-  umtk_config: ~/UMTK/config         # UMTK configuration directory
-  umtk_logs: ~/UMTK/config/logs      # UMTK log output directory
-  imagemaid_config: ~/ImageMaid/config  # ImageMaid configuration directory
-  wtwp_data: ~/WTWP/data             # WTWP persistent data
-
-  # [OPTIONAL] Report archive (backup copies reports here)
-  # Used by: backup
-  reports_archive: /mnt/Media/reports # Archived report snapshots
+  umtk: ~/UMTK/config                # UMTK configuration (logs assumed at <umtk>/logs/)
+  imagemaid: ~/ImageMaid/config       # ImageMaid configuration
 
 
 ################################################################################
@@ -83,7 +78,7 @@ server:
   hostname: myserver                  # Machine hostname (shown in Discord alerts)
 
 services:
-  plex: plexmediaserver               # systemd service name for Plex
+  plex: plexmediaserver               # systemd service name
   arr:                                # systemd services to monitor
     - radarr
     - sonarr
@@ -99,50 +94,29 @@ services:
 ##  4. TUNING — sensible defaults, rarely need changing                       ##
 ################################################################################
 
-# --- Health check thresholds ---
+# Health check thresholds
 # Used by: healthcheck, maintenance
 thresholds:
-  disk_root_critical: 90              # Root filesystem % (alert above this)
-  disk_media_critical: 95             # Media drive % (alert above this)
-  memory_critical: 95                 # RAM % (alert above this)
-  temperature_critical: 80            # CPU °C (alert above this)
+  disk_root_warn: 80                  # Root filesystem % (warning)
+  disk_root_critical: 90              # Root filesystem % (critical)
+  disk_media_critical: 95             # Media drive % (critical)
+  memory_critical: 95                 # RAM % (critical)
+  temperature_warn: 70                # CPU °C (warning)
+  temperature_critical: 80            # CPU °C (critical)
   container_restart_warn: 3           # Restart count before alerting
   task_stale_minutes: 1560            # Minutes before scheduled task is "stale" (~26h)
-  disk_root_warn: 80                  # Root filesystem % (warning, maintenance only)
-  temperature_warn: 70                # CPU °C (warning, maintenance only)
 
-# --- Log and backup retention ---
-# Used by: maintenance, backup
+# Log and backup retention
+# Used by: maintenance (log rotation), backup (archive cleanup)
 retention:
-  logs_days: 30                       # Script logs: delete after N days
-  umtk_logs_days: 14                  # UMTK logs: delete after N days
-  backups_days: 30                    # Backup archives: delete after N days
-  plextraktsync_days: 14              # PlexTraktSync daily logs: delete after N days
+  logs_days: 30                       # Script logs
+  umtk_logs_days: 14                  # UMTK logs
+  backups_days: 30                    # Backup archives
+  plextraktsync_days: 14              # PlexTraktSync daily logs
 
-# --- Notification preferences ---
-# Used by: maintenance, all scripts (footer)
+# Notification preferences
+# Used by: ALL scripts
 notifications:
-  notify_on_success: true             # Send Discord message on successful runs
-  notify_on_failure: true             # Send Discord message on failures
-  footer_prefix: myserver             # Embed footer prefix (defaults to server.hostname)
-
-# --- Discord message limits ---
-# Used by: ALL scripts (rarely needs changing)
-# discord:
-#   description_limit: 4000           # Max chars in embed description (default: 4000)
-#   content_limit: 1900               # Max chars in plain content (default: 1900)
-
-# --- Media analyzer defaults ---
-# Used by: media-analyzer
-media_analyzer:
-  default_directory: /mnt/Media/TV Shows  # Default scan directory
-  threshold_gb: 5                     # Flag files larger than this (GB)
-  min_bitrate_kbps: 1000              # Flag files with bitrate below this (kbps)
-
-# --- Encode queue defaults ---
-# Used by: encode-queue
-encode_queue:
-  default_directory: /mnt/Media/TV Shows  # Default scan directory
-  limit: 50                           # Max items to list
-  min_size_gb: 1                      # Only consider files larger than this (GB)
-  hevc_ratio: 45                      # Estimated HEVC size as % of original
+  notify_on_success: true             # Send Discord embed on successful runs
+  notify_on_failure: true             # Send Discord embed on failures
+  footer_prefix: myserver             # Discord embed footer prefix (defaults to hostname)
