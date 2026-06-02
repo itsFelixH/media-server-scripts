@@ -88,16 +88,6 @@ services:
 # How long to keep logs and backups (days)
 retention_days: 30
 
-# Health check alert thresholds (percentage or count)
-thresholds:
-  disk_root_warn: 80                  # Root filesystem %
-  disk_root_critical: 90
-  disk_media_critical: 95             # Media drive %
-  memory_critical: 95                 # RAM %
-  temperature_warn: 70                # CPU °C
-  temperature_critical: 80
-  container_restart_warn: 3           # Docker restart count
-
 # Control which Discord messages are sent
 notifications:
   on_success: true                    # Send embed on successful script runs
