@@ -109,22 +109,27 @@ DISCORD_NOTIFICATIONS="$(_cfg discord.notifications)"
 DISCORD_DESC_LIMIT=4000               # Discord API constant
 DISCORD_CONTENT_LIMIT=1900            # Safe max for content messages
 
-# Paths
-KOMETA_CONFIG="$(_cfg paths.kometa)"
-LOG_DIR="$(_cfg paths.logs)"
-REPORT_DIR="$(_cfg paths.reports)"
-REPORTS_DIR="$(_cfg paths.reports_archive)"
-METADATA_DIR="$(_cfg paths.metadata)"
-MOVIES_DIR="$(_cfg paths.movies)"
-TV_DIR="$(_cfg paths.tv)"
-BACKUP_DIR="$(_cfg paths.backups)"
-UMTK_CONFIG_DIR="$(_cfg paths.umtk)"
-UMTK_LOGS_DIR="$(_cfg paths.umtk)/logs"
-IMAGEMAID_CONFIG_DIR="$(_cfg paths.imagemaid)"
+# Paths — media
+MOVIES_DIR="$(_cfg media.movies)"
+TV_DIR="$(_cfg media.tv)"
 
-# Compose files (list of paths to back up)
-mapfile -t COMPOSE_FILES < <(_cfg_list paths compose_files)
-# Expand ~ in each entry
+# Paths — tool installations
+KOMETA_CONFIG="$(_cfg tools.kometa)"
+METADATA_DIR="$(_cfg tools.metadata)"
+UMTK_CONFIG_DIR="$(_cfg tools.umtk)"
+UMTK_LOGS_DIR="$(_cfg tools.umtk)/logs"
+IMAGEMAID_CONFIG_DIR="$(_cfg tools.imagemaid)"
+
+# Paths — script output
+LOG_DIR="$(_cfg output.logs)"
+REPORT_DIR="$(_cfg output.reports)"
+
+# Paths — backup destinations
+BACKUP_DIR="$(_cfg backup.configs)"
+REPORTS_DIR="$(_cfg backup.reports)"
+
+# Compose files to back up
+mapfile -t COMPOSE_FILES < <(_cfg_list tools compose_files)
 COMPOSE_FILES=("${COMPOSE_FILES[@]/#\~/$HOME}")
 
 # Services
