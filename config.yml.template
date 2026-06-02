@@ -4,78 +4,63 @@
 #  Copy this file to config.yml and fill in your values.                       #
 #  Lines marked [REQUIRED] must be set. Everything else has sane defaults.     #
 #                                                                              #
-#  Sections:                                                                   #
-#    1. Credentials & secrets (unique to your install)                         #
-#    2. Paths (adapt to your directory layout)                                 #
-#    3. Services (adapt to your stack)                                         #
-#    4. Tuning (thresholds, retention — rarely changed)                        #
+#  See config.sh for how these values are loaded and which variables they set. #
 ################################################################################
 
 
 ################################################################################
-##  1. CREDENTIALS & SECRETS — unique to your install                         ##
+##  1. CREDENTIALS                                                            ##
 ################################################################################
 
-# [REQUIRED] Plex Media Server
-# Used by: healthcheck, library-catalog, maintenance
+# [REQUIRED] Plex Media Server connection
 plex:
-  url: http://localhost:32400         # Host-local Plex URL
-  token: xxxxxxxxxxxxxxxxxxxx         # X-Plex-Token (https://support.plex.tv/articles/204059436)
+  url: http://localhost:32400
+  token: xxxxxxxxxxxxxxxxxxxx         # https://support.plex.tv/articles/204059436
 
-# [OPTIONAL] Discord webhook URLs
-# Used by: ALL scripts (scripts work fine without — notifications are simply skipped)
-# alerts:        failures, critical warnings → #server-alerts
-# notifications: successful runs, reports   → #notifications
+# [OPTIONAL] Discord webhooks (leave empty or remove to disable notifications)
+# "alerts" receives failures/warnings, "notifications" receives success messages
 discord:
-  alerts: https://discord.com/api/webhooks/your_alerts_webhook
-  notifications: https://discord.com/api/webhooks/your_notifications_webhook
+  alerts: https://discord.com/api/webhooks/...
+  notifications: https://discord.com/api/webhooks/...
 
-# [OPTIONAL] Arr service API keys
-# Used by: healthcheck (skips check if empty)
+# [OPTIONAL] Arr API keys (healthcheck skips these services if empty)
 api_keys:
-  radarr: your_radarr_api_key        # Settings → General → API Key
-  sonarr: your_sonarr_api_key        # Settings → General → API Key
+  radarr:                             # Settings → General → API Key
+  sonarr:                             # Settings → General → API Key
 
 
 ################################################################################
-##  2. PATHS — adapt to your directory layout                                 ##
+##  2. PATHS                                                                  ##
 ################################################################################
 
 paths:
-  # [REQUIRED] Media library roots
-  # Used by: library-catalog, metadata-audit, encode-queue, storage-report, media-analyzer
+  # Where your media files live
   movies: /mnt/Media/Movies
   tv: /mnt/Media/TV Shows
 
-  # [REQUIRED] Kometa
-  # Used by: healthcheck, maintenance, backup, metadata-audit
-  kometa: ~/kometa/config             # Kometa configuration root
-  metadata: ~/kometa/config/metadata  # Kometa metadata YAML files
+  # Kometa installation (contains config.yml, movies.yml, tv.yml, metadata/)
+  kometa: ~/kometa/config
+  metadata: ~/kometa/config/metadata
 
-  # [REQUIRED] Script output
-  # Used by: ALL scripts
-  logs: ~/kometa/scripts/logs         # Log root (per-script subdirs created automatically)
-  reports: ~/kometa/scripts/reports   # Markdown reports (overwritten each run)
+  # Where scripts write their output
+  logs: ~/kometa/scripts/logs         # Per-script subdirs created automatically
+  reports: ~/kometa/scripts/reports   # Markdown reports, overwritten each run
 
-  # [REQUIRED] External destinations (on media/backup drive)
-  # Used by: backup, archive-reports
-  backups: /mnt/Media/backups         # Config backup archives (zip)
-  reports_archive: /mnt/Media/reports # Date-stamped report snapshots
+  # Backup & archive targets (typically on external/network storage)
+  backups: /mnt/Media/backups         # Config backup zip files
+  reports_archive: /mnt/Media/reports # Date-stamped report copies
 
-  # [REQUIRED] Companion tools
-  # Used by: healthcheck, maintenance, backup
-  umtk: ~/UMTK/config                # UMTK configuration (logs assumed at <umtk>/logs/)
-  imagemaid: ~/ImageMaid/config       # ImageMaid configuration
+  # Companion tool config directories
+  umtk: ~/UMTK/config                # UMTK logs assumed at <umtk>/logs/
+  imagemaid: ~/ImageMaid/config
 
 
 ################################################################################
-##  3. SERVICES — adapt to your stack                                         ##
+##  3. SERVICES                                                               ##
 ################################################################################
 
-# [REQUIRED] Managed services and containers
-# Used by: healthcheck, maintenance
 server:
-  hostname: myserver                  # Machine hostname (shown in Discord alerts)
+  hostname: myserver                  # Shown in Discord alerts
 
 services:
   plex: plexmediaserver               # systemd service name
@@ -91,32 +76,19 @@ services:
 
 
 ################################################################################
-##  4. TUNING — sensible defaults, rarely need changing                       ##
+##  4. TUNING                                                                 ##
 ################################################################################
 
-# Health check thresholds
-# Used by: healthcheck, maintenance
+# How long to keep logs and backups (days)
+# Short-lived logs (UMTK, PlexTraktSync) use half this value automatically
+retention_days: 30
+
+# Health check alert thresholds (percentage or count)
 thresholds:
-  disk_root_warn: 80                  # Root filesystem % (warning)
-  disk_root_critical: 90              # Root filesystem % (critical)
-  disk_media_critical: 95             # Media drive % (critical)
-  memory_critical: 95                 # RAM % (critical)
-  temperature_warn: 70                # CPU °C (warning)
-  temperature_critical: 80            # CPU °C (critical)
-  container_restart_warn: 3           # Restart count before alerting
-  task_stale_minutes: 1560            # Minutes before scheduled task is "stale" (~26h)
-
-# Log and backup retention
-# Used by: maintenance (log rotation), backup (archive cleanup)
-retention:
-  logs_days: 30                       # Script logs
-  umtk_logs_days: 14                  # UMTK logs
-  backups_days: 30                    # Backup archives
-  plextraktsync_days: 14              # PlexTraktSync daily logs
-
-# Notification preferences
-# Used by: ALL scripts
-notifications:
-  notify_on_success: true             # Send Discord embed on successful runs
-  notify_on_failure: true             # Send Discord embed on failures
-  footer_prefix: myserver             # Discord embed footer prefix (defaults to hostname)
+  disk_root_warn: 80                  # Root filesystem %
+  disk_root_critical: 90
+  disk_media_critical: 95             # Media drive %
+  memory_critical: 95                 # RAM %
+  temperature_warn: 70                # CPU °C
+  temperature_critical: 80
+  container_restart_warn: 3           # Docker restart count
