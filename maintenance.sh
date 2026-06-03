@@ -81,7 +81,9 @@ init_logging() {
     echo "======================================="
 }
 
-# Send notifications to Discord
+SCRIPT_NAME="maintenance.sh"
+
+# Local notification wrapper — checks NOTIFY preferences, adds emoji/hostname prefix
 notify() {
     local message="$1"
     local status="$2"
@@ -102,10 +104,7 @@ notify() {
         local emoji="✅"
         [[ "$status" == "error" ]] && emoji="❌"
         local msg="$emoji [$SERVER_HOSTNAME] $message"
-        [ ${#msg} -gt $DISCORD_CONTENT_LIMIT ] && msg="${msg:0:$DISCORD_CONTENT_LIMIT}… (truncated)"
-        local payload
-        payload=$(jq -n --arg msg "$msg" '{content: $msg}')
-        curl -s -H "Content-Type: application/json" -X POST -d "$payload" "$webhook" >/dev/null 2>&1
+        discord_message "$webhook" "$msg"
     fi
 }
 

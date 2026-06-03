@@ -76,20 +76,7 @@ if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
 fi
 
 ####### FUNCTIONS #######
-send_discord() {
-    local webhook="$1" title="$2" description="$3" color="$4"
-    [ "$NO_DISCORD" = true ] && return
-    [[ -z "$webhook" ]] && return
-    if [ ${#description} -gt $DISCORD_DESC_LIMIT ]; then
-        description="${description:0:$((DISCORD_DESC_LIMIT - 20))}…
-
-*(truncated)*"
-    fi
-    local payload
-    payload=$(jq -n --arg title "$title" --arg desc "$description" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson color "$color" \
-        '{embeds: [{title: $title, description: $desc, color: $color, footer: {text: "'"$FOOTER_PREFIX"' • library-catalog.sh"}, timestamp: $ts}]}')
-    curl -s -H "Content-Type: application/json" -d "$payload" "$webhook" >/dev/null 2>&1
-}
+SCRIPT_NAME="library-catalog.sh"
 
 # Clean folder name (strip tmdb tags and quality info)
 clean_name() {
@@ -441,4 +428,4 @@ No changes since last run."
     fi
 fi
 
-send_discord "$DISCORD_NOTIFICATIONS" "📚 Library Catalog" "$DISCORD_DESC" "3066993"
+discord_embed "$DISCORD_NOTIFICATIONS" "📚 Library Catalog" "$DISCORD_DESC" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"

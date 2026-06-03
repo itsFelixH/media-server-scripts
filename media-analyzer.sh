@@ -143,32 +143,7 @@ if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
 fi
 
 ####### FUNCTIONS #######
-send_discord() {
-    local webhook="$1"
-    local title="$2"
-    local description="$3"
-    local color="$4"
-
-    [ "$NO_DISCORD" = true ] && return
-    [[ -z "$webhook" ]] && return
-
-    # Truncate description if it exceeds Discord's limit
-    if [ ${#description} -gt $DISCORD_DESC_LIMIT ]; then
-        description="${description:0:$((DISCORD_DESC_LIMIT - 20))}…
-
-*(truncated)*"
-    fi
-
-    local payload
-    payload=$(jq -n \
-        --arg title "$title" \
-        --arg desc "$description" \
-        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --argjson color "$color" \
-        '{embeds: [{title: $title, description: $desc, color: $color, footer: {text: "'"$FOOTER_PREFIX"' • media-analyzer.sh"}, timestamp: $ts}]}')
-
-    curl -s -H "Content-Type: application/json" -d "$payload" "$webhook" >/dev/null 2>&1
-}
+SCRIPT_NAME="media-analyzer.sh"
 
 format_size() {
     local size=$1
@@ -281,8 +256,8 @@ echo
 for d in "${DIRECTORIES[@]}"; do
     if [ ! -d "$d" ]; then
         echo "ERROR: Directory not found: $d"
-        send_discord "$DISCORD_ALERTS" "❌ Media Analyzer Failed" "Directory not found: \`$d\`
-Mode: $LABEL" "16711680"
+        discord_embed "$DISCORD_ALERTS" "❌ Media Analyzer Failed" "Directory not found: \`$d\`
+Mode: $LABEL" "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
         exit 1
     fi
 done
@@ -293,7 +268,7 @@ NUM_FILES=${#VIDEO_FILES[@]}
 
 if [ "$NUM_FILES" -eq 0 ]; then
     echo "No video files found."
-    send_discord "$DISCORD_ALERTS" "⚠️ Media Analyzer" "No video files found in \`$DIR_LABEL\`" "16776960"
+    discord_embed "$DISCORD_ALERTS" "⚠️ Media Analyzer" "No video files found in \`$DIR_LABEL\`" "$DISCORD_COLOR_WARNING" "$SCRIPT_NAME"
     exit 0
 fi
 
@@ -604,7 +579,7 @@ Match %:  $PCT%
 $TOP_MATCHES
 \`\`\`"
 
-    send_discord "$DISCORD_NOTIFICATIONS" "$EMOJI Media Analyzer: $LABEL" "$DISCORD_DESC" "3066993"
+    discord_embed "$DISCORD_NOTIFICATIONS" "$EMOJI Media Analyzer: $LABEL" "$DISCORD_DESC" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
 else
     DISCORD_DESC="$EMOJI **$LABEL**
 
@@ -616,5 +591,5 @@ Scanned **$TOTAL_SCANNED files** ($TOTAL_HUMAN) — no matches found for this fi
     [ "$PROBE_FAILURES" -gt 0 ] && DISCORD_DESC+="
 ⚠️ $PROBE_FAILURES files failed to probe"
 
-    send_discord "$DISCORD_NOTIFICATIONS" "$EMOJI Media Analyzer: $LABEL" "$DISCORD_DESC" "3066993"
+    discord_embed "$DISCORD_NOTIFICATIONS" "$EMOJI Media Analyzer: $LABEL" "$DISCORD_DESC" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
 fi

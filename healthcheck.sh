@@ -45,15 +45,7 @@ exec 2>> "$LOG_FILE"
 ISSUES=()
 PLEX_DOWN=false
 
-notify() {
-    local message="$1" webhook="$2"
-    [ "$NO_DISCORD" = true ] && return
-    [[ -z "$webhook" ]] && return
-    [ ${#message} -gt $DISCORD_CONTENT_LIMIT ] && message="${message:0:$DISCORD_CONTENT_LIMIT}… (truncated)"
-    local payload
-    payload=$(jq -n --arg msg "$message" '{content: $msg}')
-    curl -s -H "Content-Type: application/json" -X POST -d "$payload" "$webhook" >/dev/null 2>&1
-}
+SCRIPT_NAME="healthcheck.sh"
 
 # Check systemd services
 for service in "$PLEX_SERVICE" "${ARR_SERVICES[@]}"; do
@@ -246,7 +238,7 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
         for issue in "${ISSUES[@]}"; do
             msg+=$'\n'"• $issue"
         done
-        notify "$msg" "$DISCORD_ALERTS"
+        discord_message "$DISCORD_ALERTS" "$msg"
     fi
     # Save current issues
     printf '%s' "$CURRENT_FINGERPRINT" > "$LAST_ALERT_FILE"
@@ -263,7 +255,7 @@ if [ -n "$PREV_FINGERPRINT" ]; then
     while IFS= read -r prev_issue; do
         [ -n "$prev_issue" ] && msg+=$'\n'"• ~~$prev_issue~~"
     done <<< "$PREV_FINGERPRINT"
-    notify "$msg" "$DISCORD_ALERTS"
+    discord_message "$DISCORD_ALERTS" "$msg"
     rm -f "$LAST_ALERT_FILE"
 fi
 

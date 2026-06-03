@@ -76,20 +76,7 @@ if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
 fi
 
 ####### FUNCTIONS #######
-send_discord() {
-    local webhook="$1" title="$2" description="$3" color="$4"
-    [ "$NO_DISCORD" = true ] && return
-    [[ -z "$webhook" ]] && return
-    if [ ${#description} -gt $DISCORD_DESC_LIMIT ]; then
-        description="${description:0:$((DISCORD_DESC_LIMIT - 20))}…
-
-*(truncated)*"
-    fi
-    local payload
-    payload=$(jq -n --arg title "$title" --arg desc "$description" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson color "$color" \
-        '{embeds: [{title: $title, description: $desc, color: $color, footer: {text: "'"$FOOTER_PREFIX"' • backup.sh"}, timestamp: $ts}]}')
-    curl -s -H "Content-Type: application/json" -d "$payload" "$webhook" >/dev/null 2>&1
-}
+SCRIPT_NAME="backup.sh"
 
 ####### MAIN #######
 START_TIME=$(date +%s)
@@ -104,7 +91,7 @@ mkdir -p "$BACKUP_DIR"
 BACKUP_MOUNT=$(df "$BACKUP_DIR" 2>/dev/null | awk 'NR==2 {print $6}')
 if [ "$BACKUP_MOUNT" = "/" ] && [[ "$BACKUP_DIR" == /mnt/* || "$BACKUP_DIR" == /media/* ]]; then
     echo "[✗] Backup destination $BACKUP_DIR is not mounted. Backup aborted."
-    send_discord "$DISCORD_ALERTS" "❌ Backup Failed" "Backup destination $BACKUP_DIR is not mounted. Backup aborted." "16711680"
+    discord_embed "$DISCORD_ALERTS" "❌ Backup Failed" "Backup destination $BACKUP_DIR is not mounted. Backup aborted." "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
     exit 1
 fi
 
@@ -166,11 +153,11 @@ if cd "$TEMP_DIR" && zip -rq "$BACKUP_FILE" . ; then
         echo "[✓] Verified: $FILE_COUNT files, archive is valid"
     else
         echo "[✗] Verification FAILED — archive may be corrupt"
-        send_discord "$DISCORD_ALERTS" "⚠️ Backup Warning" "Backup created ($SIZE) but verification failed — archive may be corrupt." "16776960"
+        discord_embed "$DISCORD_ALERTS" "⚠️ Backup Warning" "Backup created ($SIZE) but verification failed — archive may be corrupt." "$DISCORD_COLOR_WARNING" "$SCRIPT_NAME"
     fi
 else
     echo "[✗] Backup failed (zip error)"
-    send_discord "$DISCORD_ALERTS" "❌ Backup Failed" "zip command failed. Check disk space and permissions." "16711680"
+    discord_embed "$DISCORD_ALERTS" "❌ Backup Failed" "zip command failed. Check disk space and permissions." "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
     exit 1
 fi
 
@@ -191,7 +178,7 @@ echo "Archive: $BACKUP_FILE ($SIZE)"
 echo "Log: $LOG_FILE"
 
 # Discord notification
-send_discord "$DISCORD_NOTIFICATIONS" "💾 Backup Complete" "⏱️ ${DURATION}s
+discord_embed "$DISCORD_NOTIFICATIONS" "💾 Backup Complete" "⏱️ ${DURATION}s
 
 **Config backup:**
 \`\`\`
@@ -200,4 +187,4 @@ Size:    $SIZE
 Files:   $FILE_COUNT
 \`\`\`
 
-**Old backups cleaned:** $DELETED" "3066993"
+**Old backups cleaned:** $DELETED" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
