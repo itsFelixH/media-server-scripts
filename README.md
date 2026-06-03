@@ -4,20 +4,17 @@ Maintenance and monitoring scripts for a [Plex](https://www.plex.tv/) media serv
 
 ## The Stack
 
-These scripts are built around the following services:
-
 | Service | What it does | Schedule | Links |
 |---------|-------------|----------|-------|
 | [Plex](https://www.plex.tv/) | Media streaming server | Always running | [Support](https://support.plex.tv/) |
 | [Kometa](https://github.com/Kometa-Team/Kometa) | Metadata, collections, and overlay management for Plex | Daily at 05:00 (internal scheduler) | [Wiki](https://kometa.wiki/en/latest/) |
 | [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) | Upcoming movies/TV shows + TV show status overlays for Kometa | Daily at 02:00 (Docker internal cron) | [Docs](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) |
-| [Pattrmm](https://github.com/InsertDisc/pattrmm) | Alternative to UMTK — returning/new series overlays for Kometa | Docker internal cron | [Docs](https://github.com/InsertDisc/pattrmm) |
 | [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) | Syncs Plex watch history and ratings with Trakt | Always running (systemd) | [Docs](https://github.com/Taxel/PlexTraktSync) |
 | [ImageMaid](https://github.com/Kometa-Team/ImageMaid) | Plex metadata image cleanup and DB optimization | Weekly Sundays at 07:00 (Docker internal) | [GitHub](https://github.com/Kometa-Team/ImageMaid) |
 | [Radarr](https://radarr.video/) | Movie management and downloads | Always running (systemd) | |
 | [Sonarr](https://sonarr.tv/) | TV show management and downloads | Always running (systemd) | |
 
-The scripts monitor, maintain, and report on this stack. They don't replace any of these tools. They wrap around them to keep everything healthy and give you visibility into your library.
+The scripts monitor, maintain, and report on this stack. They don't replace any of these tools — they wrap around them to keep everything healthy and give you visibility into your library.
 
 ## Quick Start
 
@@ -55,6 +52,7 @@ bash healthcheck.sh
 | `healthcheck.sh` | Monitor services, disk, memory, temperature, APIs | Every 30 min |
 | `maintenance.sh` | System updates, Docker updates, log rotation, diagnostics | Mondays 03:00 |
 | `backup.sh` | Archive all configs to media drive | Sundays 01:00 |
+| `archive-reports.sh` | Copy changed reports to archive with date stamps | Daily 05:30 |
 | `library-catalog.sh` | Snapshot library contents with diff tracking | Sundays 01:30 |
 | `metadata-audit.sh` | Validate metadata files against library | Sundays 02:00 |
 | `encode-queue.sh` | Find re-encoding candidates | 1st of month |
@@ -71,22 +69,20 @@ Scripts with terminal output support `-q`/`--quiet` for cron use.
 
 All scripts load settings from `config.yml` via the shared `config.sh` loader. The config file is gitignored (contains secrets).
 
-Copy `config.yml.template` to `config.yml` and fill in your values. Below is what each script needs, sorted by importance.
+Copy `config.yml.template` to `config.yml` and fill in your values. The template is fully commented with what each key does.
 
-> **Using a single script?** You only need to fill in the keys listed under that script's section (plus the Global keys). Leave everything else empty or remove it — `config.sh` won't fail on missing optional keys, it just uses defaults or skips those checks.
+### Config structure
 
-### Global (used by all scripts)
+The config is organized into four sections:
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `server.hostname` | ✅ | Shown in Discord messages |
-| `paths.logs` | ✅ | Where scripts write logs |
-| `paths.reports` | ✅ | Where reports are saved |
-| `discord.alerts` | ❌ | Webhook URL for `#server-alerts` (skipped if empty) |
-| `discord.notifications` | ❌ | Webhook URL for `#notifications` (skipped if empty) |
-| `notifications.footer_prefix` | ❌ | Discord embed footer (defaults to hostname) |
-| `discord.description_limit` | ❌ | Max embed chars (default: 4000) |
-| `discord.content_limit` | ❌ | Max content chars (default: 1900) |
+1. **Credentials** — `plex` (url, token), `discord` (alerts, notifications webhooks), `api_keys` (radarr, sonarr)
+2. **Paths** — `media` (movies, tv), `tools` (kometa, umtk, imagemaid, compose_files list), `output` (logs, reports), `backup` (configs, reports)
+3. **Services** — `server` (hostname), `services` (plex service name, arr list, docker_containers list)
+4. **Tuning** — `retention_days` (single value applied to all logs/backups), `notifications` (on_success, on_failure)
+
+Thresholds (disk %, memory %, temperature, stale task minutes) are hardcoded in `config.sh` with sensible defaults — no config needed.
+
+> **Using a single script?** You only need to fill in the keys that script uses (plus `server.hostname`). Leave everything else empty or remove it — `config.sh` won't fail on missing optional keys, it just skips those checks.
 
 ---
 
@@ -95,24 +91,9 @@ Copy `config.yml.template` to `config.yml` and fill in your values. Below is wha
 
 Runs silently. Only alerts Discord when something is wrong. Auto-restarts failed Docker containers.
 
-#### Config entries
+#### Config keys used
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `plex.token` | ✅ | Validates Plex API access |
-| `services.plex` | ✅ | systemd service name to monitor |
-| `services.arr` | ✅ | List of arr services to check |
-| `services.docker_containers` | ✅ | Containers to monitor/auto-restart |
-| `paths.kometa_config` | ✅ | Checks Kometa last-run log |
-| `paths.umtk_logs` | ✅ | Checks UMTK last-run time |
-| `api_keys.radarr` | ❌ | If set, checks Radarr API health |
-| `api_keys.sonarr` | ❌ | If set, checks Sonarr API health |
-| `thresholds.disk_root_critical` | ❌ | Root disk % alert (default: 90) |
-| `thresholds.disk_media_critical` | ❌ | Media drive % alert (default: 95) |
-| `thresholds.memory_critical` | ❌ | RAM % alert (default: 95) |
-| `thresholds.temperature_critical` | ❌ | CPU °C alert (default: 80) |
-| `thresholds.container_restart_warn` | ❌ | Restart count before alert (default: 3) |
-| `thresholds.task_stale_minutes` | ❌ | Minutes before task is "stale" (default: 1560 ≈ 26h) |
+`plex.*`, `api_keys.*`, `services.*`, `tools.kometa`, `tools.umtk`
 
 #### What it checks
 
@@ -122,7 +103,7 @@ Runs silently. Only alerts Discord when something is wrong. Auto-restarts failed
 - RAM and swap usage
 - CPU temperature
 - Plex API responding + token valid
-- Radarr/Sonarr API responding
+- Radarr/Sonarr API responding (skipped if keys empty)
 - Internet + TMDb reachability
 - UMTK, Kometa, PlexTraktSync last run times
 
@@ -140,25 +121,9 @@ Runs silently. Only alerts Discord when something is wrong. Auto-restarts failed
 
 Interactive menu with 11 maintenance tasks. Also runs unattended via `--scheduled`.
 
-#### Config entries
+#### Config keys used
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `services.plex` | ✅ | Service to check/restart |
-| `services.arr` | ✅ | Services to check/restart |
-| `services.docker_containers` | ✅ | Containers to update/restart |
-| `paths.kometa_config` | ✅ | Config validation target |
-| `paths.umtk_config` | ✅ | Config validation target |
-| `paths.umtk_logs` | ✅ | Log rotation target |
-| `paths.imagemaid_config` | ✅ | Config validation target |
-| `paths.wtwp_data` | ✅ | WTWP data directory |
-| `retention.logs_days` | ❌ | Delete logs older than N days (default: 30) |
-| `retention.umtk_logs_days` | ❌ | UMTK log retention (default: 14) |
-| `retention.plextraktsync_days` | ❌ | PTS log retention (default: 14) |
-| `thresholds.disk_root_warn` | ❌ | Disk warning % (default: 80) |
-| `thresholds.disk_root_critical` | ❌ | Disk critical % (default: 90) |
-| `thresholds.temperature_warn` | ❌ | Temp warning °C (default: 70) |
-| `thresholds.temperature_critical` | ❌ | Temp critical °C (default: 80) |
+`services.*`, `tools.*`, `retention_days`
 
 #### Menu options
 
@@ -189,29 +154,40 @@ Runs tasks 1, 2, 3, 5, 10, 11 unattended. Sends summary to Discord.
 <details>
 <summary><strong>backup.sh</strong> — config archival with retention</summary>
 
-Creates a zip archive of all critical configs and scripts. Manages retention automatically.
+Creates a zip archive of all critical configs and scripts. Output filename: `<hostname>-backup-YYYYMMDD.zip`. Manages retention automatically.
 
-#### Config entries
+#### Config keys used
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `paths.backups` | ✅ | Destination directory for archives |
-| `paths.kometa_config` | ✅ | Kometa configs to back up |
-| `paths.metadata` | ✅ | Metadata YAML files |
-| `paths.umtk_config` | ✅ | UMTK configs |
-| `paths.imagemaid_config` | ✅ | ImageMaid config |
-| `paths.reports_archive` | ❌ | Archived reports location |
-| `retention.backups_days` | ❌ | Keep backups for N days (default: 30) |
+`backup.configs`, `tools.*`, `retention_days`, `server.hostname`
 
 #### What gets backed up
 
-- Kometa configs (`config.yml`, `movies.yml`, `tv.yml`, `playlists.yml`)
-- Kometa metadata files
-- Scripts config (`config.yml`)
-- UMTK configs (`config.yml`, `tssk_config.yml`)
+- All `*.yml` from the Kometa config directory
+- Kometa metadata directory (if it contains yml files)
+- All `*.yml` from the UMTK config directory
 - ImageMaid config (`.env`)
-- Docker compose files
+- Docker compose files (from `tools.compose_files` list)
+- Scripts config (`config.yml`)
 - Crontab
+
+</details>
+
+<details>
+<summary><strong>archive-reports.sh</strong> — daily report archiver</summary>
+
+Copies new or changed markdown reports to the archive location with date-stamped filenames. Only archives when content has actually changed.
+
+#### Config keys used
+
+`output.reports`, `backup.reports`
+
+#### Behavior
+
+- Reads reports from `output.reports` directory
+- Archives to `backup.reports` in per-report subdirectories
+- Filenames: `<report-name>-YYYY-MM-DD.md`
+- Skips unchanged reports (diff comparison against latest archived copy)
+- Checks that the archive mount is available before writing
 
 </details>
 
@@ -220,14 +196,9 @@ Creates a zip archive of all critical configs and scripts. Manages retention aut
 
 Generates a full markdown listing of all movies and TV shows. Compares against the previous run to highlight additions and removals.
 
-#### Config entries
+#### Config keys used
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `paths.movies` | ✅ | Movies library root directory |
-| `paths.tv_shows` | ✅ | TV Shows library root directory |
-| `plex.token` | ✅ | Plex API access for metadata |
-| `plex.url` | ✅ | Plex server URL |
+`media.*`, `plex.*`
 
 #### Output
 
@@ -242,13 +213,9 @@ Generates a full markdown listing of all movies and TV shows. Compares against t
 
 Checks Kometa metadata YAML files against actual library content. Finds orphaned entries, missing metadata, duplicates, and season/episode gaps.
 
-#### Config entries
+#### Config keys used
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `paths.metadata` | ✅ | Kometa metadata YAML directory |
-| `paths.movies` | ✅ | Movies library root |
-| `paths.tv_shows` | ✅ | TV Shows library root |
+`tools.kometa` (metadata dir derived), `media.*`
 
 #### What it checks
 
@@ -268,15 +235,9 @@ Checks Kometa metadata YAML files against actual library content. Finds orphaned
 
 Scans for non-HEVC/non-AV1 files and generates a prioritized re-encode list sorted by size. Estimates space savings. Does NOT perform any encoding.
 
-#### Config entries
+#### Config keys used
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `paths.movies` | ✅ | Default scan directory |
-| `paths.tv_shows` | ✅ | Default scan directory |
-| `encode_queue.limit` | ❌ | Max items to list (default: 50) |
-| `encode_queue.min_size_gb` | ❌ | Minimum file size in GB (default: 1) |
-| `encode_queue.hevc_ratio` | ❌ | Estimated HEVC size as % of original (default: 45) |
+`media.*`
 
 #### Usage
 
@@ -297,11 +258,9 @@ Scans for non-HEVC/non-AV1 files and generates a prioritized re-encode list sort
 
 Scans a media directory and generates a detailed storage report. Auto-detects TV (show/season) vs Movies (flat) structure. Compares against previous run.
 
-#### Config entries
+#### Config keys used
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `paths.tv_shows` | ✅ | Default scan directory |
+`media.tv` (default scan directory)
 
 #### Usage
 
@@ -321,13 +280,9 @@ Scans a media directory and generates a detailed storage report. Auto-detects TV
 
 Scans video files, probes each for codec and resolution, filters by mode. Supports scanning multiple directories.
 
-#### Config entries
+#### Config keys used
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `media_analyzer.default_directory` | ❌ | Default scan path (default: TV Shows) |
-| `media_analyzer.threshold_gb` | ❌ | Size threshold for `large` mode (default: 5) |
-| `media_analyzer.min_bitrate_kbps` | ❌ | Low-bitrate threshold (default: 1000) |
+`media.*`
 
 #### Modes
 
@@ -362,12 +317,6 @@ Scans video files, probes each for codec and resolution, filters by mode. Suppor
 
 Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa) inside its Docker container with different options.
 
-#### Config entries
-
-| Key | Required | Description |
-|-----|----------|-------------|
-| (none beyond global) | — | Uses Docker directly |
-
 #### Options
 
 - Full run (all libraries)
@@ -381,8 +330,6 @@ Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa
 ---
 
 ## Crontab Setup
-
-Example cron entries (adjust paths to your install location):
 
 ```cron
 # Health check (every 30 minutes)
@@ -405,6 +352,9 @@ Example cron entries (adjust paths to your install location):
 
 # Storage report (28th of month 04:30)
 30 4 28 * * bash ~/kometa/scripts/storage-report.sh --quiet
+
+# Archive reports (daily 05:30)
+30 5 * * * bash ~/kometa/scripts/archive-reports.sh --quiet
 ```
 
 The Docker-based services have their own internal schedules:
@@ -419,14 +369,19 @@ The Docker-based services have their own internal schedules:
 
 ## Discord Notifications
 
-Optional. If webhooks are configured, scripts send notifications to two channels:
+All scripts share a single `discord_notify` function defined in `config.sh`. No per-script notification code needed.
 
-| Channel | Purpose | Triggers |
-|---------|---------|----------|
-| `#server-alerts` | Failures and warnings | Health check failures, backup errors, container down, token mismatch |
-| `#notifications` | Successful runs | Backup complete, maintenance done, reports generated |
+#### Levels
 
-Leave the webhook URLs empty in `config.yml` to disable notifications entirely, or use `--no-discord` per-run.
+| Level | Webhook | Use case |
+|-------|---------|----------|
+| `success` | `discord.notifications` | Successful runs, completions |
+| `warning` | `discord.alerts` | Non-critical issues |
+| `error` | `discord.alerts` | Failures, things that need attention |
+
+The footer on every notification automatically includes the hostname, script name, and run duration.
+
+Control which messages are sent via `notifications.on_success` and `notifications.on_failure` in config. Use `--no-discord` per-run to suppress entirely.
 
 ---
 
@@ -435,11 +390,12 @@ Leave the webhook URLs empty in `config.yml` to disable notifications entirely, 
 ```
 ~/kometa/scripts/
 ├── config.yml              # Your config (gitignored, contains secrets)
-├── config.yml.template     # Template with placeholder values
-├── config.sh               # Config loader (sources config.yml)
+├── config.yml.template     # Template with full documentation
+├── config.sh               # Config loader + discord_notify function
 ├── healthcheck.sh
 ├── maintenance.sh
 ├── backup.sh
+├── archive-reports.sh
 ├── runkometa.sh
 ├── library-catalog.sh
 ├── metadata-audit.sh
@@ -447,9 +403,10 @@ Leave the webhook URLs empty in `config.yml` to disable notifications entirely, 
 ├── storage-report.sh
 ├── encode-queue.sh
 ├── logs/                   # Per-script log subdirectories (gitignored)
+│   ├── archive-reports/
+│   ├── backup/
 │   ├── healthcheck/
 │   ├── maintenance/
-│   ├── backup/
 │   └── ...
 └── reports/                # Generated markdown reports (gitignored)
 ```
@@ -460,7 +417,6 @@ Leave the webhook URLs empty in `config.yml` to disable notifications entirely, 
 
 - [Kometa](https://github.com/Kometa-Team/Kometa) — Metadata, collections, and overlays for Plex
 - [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) — Upcoming movies/TV shows + status overlays
-- [Pattrmm](https://github.com/InsertDisc/pattrmm) — Alternative to UMTK — returning/new series overlays
 - [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) — Syncs Plex watch history and ratings with Trakt
 - [ImageMaid](https://github.com/Kometa-Team/ImageMaid) — Plex image cleanup and DB optimization
 - [WTWP](https://github.com/netplexflix/What-to-watch-on-Plex) — Group swiping app to decide what to watch
