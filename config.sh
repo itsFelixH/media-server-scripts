@@ -106,8 +106,7 @@ API_KEY_SONARR="$(_cfg api_keys.sonarr)"
 # Discord
 DISCORD_ALERTS="$(_cfg discord.alerts)"
 DISCORD_NOTIFICATIONS="$(_cfg discord.notifications)"
-DISCORD_DESC_LIMIT=4000               # Discord API constant
-DISCORD_CONTENT_LIMIT=1900            # Safe max for content messages
+DISCORD_DESC_LIMIT=4000               # Discord embed description char limit (API constant)
 
 # Paths — media
 MOVIES_DIR="$(_cfg media.movies)"
