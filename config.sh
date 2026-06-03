@@ -181,25 +181,52 @@ DISCORD_COLOR_SUCCESS=3066993         # Green
 DISCORD_COLOR_WARNING=16776960        # Yellow
 DISCORD_COLOR_ERROR=16711680          # Red
 
-# Send an embed message to Discord
-# Usage: discord_embed <webhook> <title> <description> <color> [script_name]
-# Color: use DISCORD_COLOR_* constants or a raw decimal value
-discord_embed() {
-    local webhook="$1" title="$2" description="$3" color="$4" script_name="${5:-}"
+# Send a Discord embed notification
+# Usage: discord_notify <level> <title> <description>
+#   level: success | warning | error
+#   title: embed title (short, no emoji needed — added automatically)
+#   description: embed body (markdown supported, keep it brief)
+#
+# Respects NOTIFY_ON_SUCCESS / NOTIFY_ON_FAILURE preferences.
+# Footer auto-includes: hostname • script name • duration (if START_TIME is set)
+discord_notify() {
+    local level="$1" title="$2" description="${3:-}"
     [ "$NO_DISCORD" = true ] && return
-    [[ -z "$webhook" ]] && return
 
-    # Respect notification preferences
-    if [ "$color" = "$DISCORD_COLOR_ERROR" ] && [ "$NOTIFY_ON_FAILURE" != true ]; then return; fi
-    if [ "$color" = "$DISCORD_COLOR_SUCCESS" ] && [ "$NOTIFY_ON_SUCCESS" != true ]; then return; fi
+    local webhook="" color=0
+    case "$level" in
+        success)
+            [ "$NOTIFY_ON_SUCCESS" != true ] && return
+            webhook="$DISCORD_NOTIFICATIONS"
+            color=$DISCORD_COLOR_SUCCESS
+            ;;
+        warning)
+            webhook="$DISCORD_ALERTS"
+            color=$DISCORD_COLOR_WARNING
+            ;;
+        error)
+            [ "$NOTIFY_ON_FAILURE" != true ] && return
+            webhook="$DISCORD_ALERTS"
+            color=$DISCORD_COLOR_ERROR
+            ;;
+    esac
+
+    [[ -z "$webhook" ]] && return
 
     # Truncate description to Discord limit
     if [ ${#description} -gt $DISCORD_DESC_LIMIT ]; then
-        description="${description:0:$((DISCORD_DESC_LIMIT - 20))}…\n\n*(truncated)*"
+        description="${description:0:$((DISCORD_DESC_LIMIT - 20))}…
+
+*(truncated)*"
     fi
 
+    # Build footer: hostname • script name • duration
     local footer="$FOOTER_PREFIX"
-    [ -n "$script_name" ] && footer="$FOOTER_PREFIX • $script_name"
+    [ -n "$SCRIPT_NAME" ] && footer="$footer • $SCRIPT_NAME"
+    if [ -n "$START_TIME" ]; then
+        local elapsed=$(( $(date +%s) - START_TIME ))
+        footer="$footer • ${elapsed}s"
+    fi
 
     local payload
     payload=$(jq -n \
@@ -211,21 +238,4 @@ discord_embed() {
         '{embeds: [{title: $title, description: $desc, color: $color, footer: {text: $footer}, timestamp: $ts}]}')
 
     curl -s -H "Content-Type: application/json" -d "$payload" "$webhook" >/dev/null 2>&1
-}
-
-# Send a plain text message to Discord (for healthcheck/maintenance alerts)
-# Usage: discord_message <webhook> <message>
-discord_message() {
-    local webhook="$1" message="$2"
-    [ "$NO_DISCORD" = true ] && return
-    [[ -z "$webhook" ]] && return
-
-    # Truncate to content limit
-    if [ ${#message} -gt $DISCORD_CONTENT_LIMIT ]; then
-        message="${message:0:$DISCORD_CONTENT_LIMIT}… (truncated)"
-    fi
-
-    local payload
-    payload=$(jq -n --arg msg "$message" '{content: $msg}')
-    curl -s -H "Content-Type: application/json" -X POST -d "$payload" "$webhook" >/dev/null 2>&1
 }
