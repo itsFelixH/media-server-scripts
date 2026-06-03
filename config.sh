@@ -115,7 +115,7 @@ TV_DIR="$(_cfg media.tv)"
 
 # Paths — tool installations
 KOMETA_CONFIG="$(_cfg tools.kometa)"
-METADATA_DIR="$(_cfg tools.metadata)"
+METADATA_DIR="$KOMETA_CONFIG/metadata"
 UMTK_CONFIG_DIR="$(_cfg tools.umtk)"
 UMTK_LOGS_DIR="$(_cfg tools.umtk)/logs"
 IMAGEMAID_CONFIG_DIR="$(_cfg tools.imagemaid)"
