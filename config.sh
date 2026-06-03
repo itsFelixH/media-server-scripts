@@ -172,3 +172,60 @@ ENCODE_QUEUE_DIR="$TV_DIR"
 ENCODE_QUEUE_LIMIT=50
 ENCODE_QUEUE_MIN_SIZE_GB=1
 ENCODE_QUEUE_HEVC_RATIO=45
+
+# --- Discord helpers ---
+# Shared by all scripts. Set NO_DISCORD=true in your script to suppress.
+
+# Color constants
+DISCORD_COLOR_SUCCESS=3066993         # Green
+DISCORD_COLOR_WARNING=16776960        # Yellow
+DISCORD_COLOR_ERROR=16711680          # Red
+
+# Send an embed message to Discord
+# Usage: discord_embed <webhook> <title> <description> <color> [script_name]
+# Color: use DISCORD_COLOR_* constants or a raw decimal value
+discord_embed() {
+    local webhook="$1" title="$2" description="$3" color="$4" script_name="${5:-}"
+    [ "$NO_DISCORD" = true ] && return
+    [[ -z "$webhook" ]] && return
+
+    # Respect notification preferences
+    if [ "$color" = "$DISCORD_COLOR_ERROR" ] && [ "$NOTIFY_ON_FAILURE" != true ]; then return; fi
+    if [ "$color" = "$DISCORD_COLOR_SUCCESS" ] && [ "$NOTIFY_ON_SUCCESS" != true ]; then return; fi
+
+    # Truncate description to Discord limit
+    if [ ${#description} -gt $DISCORD_DESC_LIMIT ]; then
+        description="${description:0:$((DISCORD_DESC_LIMIT - 20))}…\n\n*(truncated)*"
+    fi
+
+    local footer="$FOOTER_PREFIX"
+    [ -n "$script_name" ] && footer="$FOOTER_PREFIX • $script_name"
+
+    local payload
+    payload=$(jq -n \
+        --arg title "$title" \
+        --arg desc "$description" \
+        --argjson color "$color" \
+        --arg footer "$footer" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{embeds: [{title: $title, description: $desc, color: $color, footer: {text: $footer}, timestamp: $ts}]}')
+
+    curl -s -H "Content-Type: application/json" -d "$payload" "$webhook" >/dev/null 2>&1
+}
+
+# Send a plain text message to Discord (for healthcheck/maintenance alerts)
+# Usage: discord_message <webhook> <message>
+discord_message() {
+    local webhook="$1" message="$2"
+    [ "$NO_DISCORD" = true ] && return
+    [[ -z "$webhook" ]] && return
+
+    # Truncate to content limit
+    if [ ${#message} -gt $DISCORD_CONTENT_LIMIT ]; then
+        message="${message:0:$DISCORD_CONTENT_LIMIT}… (truncated)"
+    fi
+
+    local payload
+    payload=$(jq -n --arg msg "$message" '{content: $msg}')
+    curl -s -H "Content-Type: application/json" -X POST -d "$payload" "$webhook" >/dev/null 2>&1
+}
