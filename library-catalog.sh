@@ -362,38 +362,33 @@ fi
 echo "Catalog saved to: $CATALOG_FILE"
 
 # Build Discord message
-DISCORD_DESC="$MOVIE_COUNT movies · $TV_COUNT shows · $TOTAL_EPISODES episodes"
+DISCORD_DESC="**$MOVIE_COUNT** movies · **$TV_COUNT** shows · **$TOTAL_EPISODES** episodes"
 
 # Add diff info if available
 if [ -f "$PREV_CATALOG" ]; then
     CHANGES=""
-    [ ${#ADDED_MOVIES[@]} -gt 0 ] && CHANGES+="+${#ADDED_MOVIES[@]} movies "
-    [ ${#ADDED_SHOWS[@]} -gt 0 ] && CHANGES+="+${#ADDED_SHOWS[@]} shows "
-    [ ${#NEW_SEASONS[@]} -gt 0 ] && CHANGES+="+${#NEW_SEASONS[@]} seasons "
-    [ ${#NEW_EPISODES[@]} -gt 0 ] && CHANGES+="+${#NEW_EPISODES[@]} episodes "
-    [ ${#REMOVED_MOVIES[@]} -gt 0 ] && CHANGES+="-${#REMOVED_MOVIES[@]} movies "
-    [ ${#REMOVED_SHOWS[@]} -gt 0 ] && CHANGES+="-${#REMOVED_SHOWS[@]} shows "
+    [ ${#ADDED_MOVIES[@]} -gt 0 ] && CHANGES+="📥 ${#ADDED_MOVIES[@]} movies  "
+    [ ${#ADDED_SHOWS[@]} -gt 0 ] && CHANGES+="📥 ${#ADDED_SHOWS[@]} shows  "
+    [ ${#NEW_SEASONS[@]} -gt 0 ] && CHANGES+="📺 ${#NEW_SEASONS[@]} seasons  "
+    [ ${#NEW_EPISODES[@]} -gt 0 ] && CHANGES+="🎞️ ${#NEW_EPISODES[@]} episodes  "
+    [ ${#REMOVED_MOVIES[@]} -gt 0 ] && CHANGES+="📤 ${#REMOVED_MOVIES[@]} removed  "
 
     if [ -n "$CHANGES" ]; then
         DISCORD_DESC+="
 
-**Changes:** $CHANGES"
-
-        if [ ${#ADDED_MOVIES[@]} -gt 0 ]; then
+$CHANGES"
+        # Show new titles (combined, max 8 lines)
+        NEW_TITLES=""
+        [ ${#ADDED_MOVIES[@]} -gt 0 ] && NEW_TITLES+="$(printf '%s\n' "${ADDED_MOVIES[@]}" | head -4)"$'\n'
+        [ ${#ADDED_SHOWS[@]} -gt 0 ] && NEW_TITLES+="$(printf '%s\n' "${ADDED_SHOWS[@]}" | head -4)"$'\n'
+        if [ -n "$NEW_TITLES" ]; then
             DISCORD_DESC+="
 \`\`\`
-$(printf '%s\n' "${ADDED_MOVIES[@]}" | head -5)
-\`\`\`"
-        fi
-        if [ ${#ADDED_SHOWS[@]} -gt 0 ]; then
-            DISCORD_DESC+="
-\`\`\`
-$(printf '%s\n' "${ADDED_SHOWS[@]}" | head -5)
+${NEW_TITLES%$'\n'}
 \`\`\`"
         fi
     else
         DISCORD_DESC+="
-
 No changes since last run."
     fi
 fi

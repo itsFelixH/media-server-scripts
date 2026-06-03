@@ -554,26 +554,18 @@ if [ "$MATCH_COUNT" -gt 0 ]; then
     RES_BREAKDOWN="${RES_BREAKDOWN% · }"
 
     # Compose Discord message
-    DISCORD_DESC="$MATCH_COUNT / $TOTAL_SCANNED files · $MATCH_HUMAN matched
-**Codecs:** $CODEC_BREAKDOWN
-**Resolutions:** $RES_BREAKDOWN"
+    DISCORD_DESC="**$MATCH_COUNT** / $TOTAL_SCANNED files matched · $MATCH_HUMAN
+$CODEC_BREAKDOWN · $RES_BREAKDOWN"
 
     [ "$PROBE_FAILURES" -gt 0 ] && DISCORD_DESC+="
 ⚠️ $PROBE_FAILURES failed to probe"
 
     DISCORD_DESC+="
-
-**Top matches:**
 \`\`\`
-$TOP_MATCHES
+$(echo "$TOP_MATCHES" | head -5)
 \`\`\`"
 
     discord_notify "success" "🎬 Media Analyzer: $LABEL" "$DISCORD_DESC"
 else
-    DISCORD_DESC="Scanned $TOTAL_SCANNED files ($TOTAL_HUMAN) — no matches."
-
-    [ "$PROBE_FAILURES" -gt 0 ] && DISCORD_DESC+="
-⚠️ $PROBE_FAILURES failed to probe"
-
-    discord_notify "success" "🎬 Media Analyzer: $LABEL" "$DISCORD_DESC"
+    discord_notify "success" "🎬 Media Analyzer: $LABEL" "Scanned $TOTAL_SCANNED files ($TOTAL_HUMAN) — no matches."
 fi

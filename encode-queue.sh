@@ -303,11 +303,9 @@ TOP_GROUPED=$(awk -F'\t' '{
     printf "%s · %d files · %s · save ~%s\n" "$name" "$file_count" "$size_h" "$est_saved"
 done)
 
-DISCORD_DESC="$NON_HEVC_COUNT files · $(format_size "${TOTAL_NON_HEVC_BYTES:-0}") · save ~$(format_size "${ESTIMATED_SAVINGS:-0}")
-
-**Top candidates:**
+DISCORD_DESC="**$NON_HEVC_COUNT** files · $(format_size "${TOTAL_NON_HEVC_BYTES:-0}") → save ~$(format_size "${ESTIMATED_SAVINGS:-0}")
 \`\`\`
-$TOP_GROUPED
+$(echo "$TOP_GROUPED" | head -5)
 \`\`\`"
 
 discord_notify "success" "🔄 Encode Queue" "$DISCORD_DESC"

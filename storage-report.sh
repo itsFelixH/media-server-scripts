@@ -464,9 +464,15 @@ for bucket in "4K" "FHD" "HD" "SD"; do
     RES_SUMMARY+="$bucket: $count  "
 done
 
-DISCORD_DESC="$TOTAL_FILES files · $TOTAL_HUMAN
-**Resolution:** $RES_SUMMARY
-**Codecs:** $(for c in "HEVC" "H264" "AV1"; do count=${CODEC_COUNTS[$c]:-0}; [ "$count" -gt 0 ] && printf "%s: %d  " "$c" "$count"; done)"
+CODEC_SUMMARY=""
+for c in "HEVC" "H264" "AV1"; do
+    count=${CODEC_COUNTS[$c]:-0}
+    [ "$count" -gt 0 ] && CODEC_SUMMARY+="$c: $count  "
+done
+
+DISCORD_DESC="**$TOTAL_FILES** files · **$TOTAL_HUMAN**
+$RES_SUMMARY
+$CODEC_SUMMARY"
 
 # Add comparison info if available
 if [ -f "$REPORT_PREV" ] && [ "${FILES_CHANGE:-0}" -ne 0 ] 2>/dev/null; then
@@ -475,7 +481,7 @@ if [ -f "$REPORT_PREV" ] && [ "${FILES_CHANGE:-0}" -ne 0 ] 2>/dev/null; then
 📈 +$FILES_CHANGE files since last run"
     else
         DISCORD_DESC+="
-📉 ${FILES_CHANGE#-} fewer files since last run"
+📉 -${FILES_CHANGE#-} files since last run"
     fi
 fi
 
