@@ -590,21 +590,12 @@ echo "  Log:    $LOG_FILE"
 echo "  Report: $REPORT_FILE"
 
 # Discord notification
-DISCORD_DESC="🔍 **Metadata Audit**
-
-⏱️ ${DURATION}s
-
-**Results:**
-\`\`\`
-Errors:       $ISSUE_COUNT
-Warnings:     $WARNING_COUNT
-Orphaned (movie): $ORPHANED_MOVIES
-Orphaned (TV):    $ORPHANED_TV
-Missing (movie):  $MISSING_MOVIES
-Missing (TV):     $MISSING_TV
-Duplicates:       $((DUPE_MOVIE_COUNT + DUPE_TV_COUNT))
-Season issues:    $SEASON_ISSUE_COUNT
-Episode gaps:     $SEASON_WARNING_COUNT
+DISCORD_DESC="\`\`\`
+Errors:    $ISSUE_COUNT
+Warnings:  $WARNING_COUNT
+Orphaned:  $((ORPHANED_MOVIES + ORPHANED_TV))
+Missing:   $((MISSING_MOVIES + MISSING_TV))
+Duplicates: $((DUPE_MOVIE_COUNT + DUPE_TV_COUNT))
 \`\`\`"
 
 if [ "$ISSUE_COUNT" -gt 0 ]; then
@@ -616,9 +607,9 @@ $(printf '%s\n' "${ISSUES[@]}" | head -5)
 fi
 
 if [ "$ISSUE_COUNT" -gt 0 ]; then
-    discord_embed "$DISCORD_ALERTS" "🔍 Metadata Validation" "$DISCORD_DESC" "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
+    discord_notify "error" "🔍 Metadata Audit" "$DISCORD_DESC"
 elif [ "$WARNING_COUNT" -gt 0 ]; then
-    discord_embed "$DISCORD_NOTIFICATIONS" "🔍 Metadata Validation" "$DISCORD_DESC" "$DISCORD_COLOR_WARNING" "$SCRIPT_NAME"
+    discord_notify "warning" "🔍 Metadata Audit" "$DISCORD_DESC"
 else
-    discord_embed "$DISCORD_NOTIFICATIONS" "🔍 Metadata Validation" "✅ All metadata valid. No issues found. (${DURATION}s)" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
+    discord_notify "success" "🔍 Metadata Audit" "No issues found."
 fi

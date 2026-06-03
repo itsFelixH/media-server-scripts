@@ -83,29 +83,10 @@ init_logging() {
 
 SCRIPT_NAME="maintenance.sh"
 
-# Local notification wrapper — checks NOTIFY preferences, adds emoji/hostname prefix
+# Local notification wrapper
 notify() {
-    local message="$1"
-    local status="$2"
-
-    [ "$NO_DISCORD" = true ] && return
-    
-    local webhook=""
-    if [[ "$status" == "error" ]]; then
-        webhook="$DISCORD_ALERTS"
-    else
-        webhook="$DISCORD_NOTIFICATIONS"
-    fi
-    
-    # Skip if webhook is empty or placeholder
-    [[ -z "$webhook" || "$webhook" == *"your_webhook_here"* ]] && return
-    
-    if [[ "$status" == "error" && "$NOTIFY_ON_FAILURE" == true ]] || [[ "$status" == "success" && "$NOTIFY_ON_SUCCESS" == true ]]; then
-        local emoji="✅"
-        [[ "$status" == "error" ]] && emoji="❌"
-        local msg="$emoji [$SERVER_HOSTNAME] $message"
-        discord_message "$webhook" "$msg"
-    fi
+    local message="$1" status="$2"
+    discord_notify "$status" "$( [ "$status" = "error" ] && echo "❌" || echo "✅") $message"
 }
 
 # System maintenance

@@ -91,7 +91,7 @@ mkdir -p "$BACKUP_DIR"
 BACKUP_MOUNT=$(df "$BACKUP_DIR" 2>/dev/null | awk 'NR==2 {print $6}')
 if [ "$BACKUP_MOUNT" = "/" ] && [[ "$BACKUP_DIR" == /mnt/* || "$BACKUP_DIR" == /media/* ]]; then
     echo "[✗] Backup destination $BACKUP_DIR is not mounted. Backup aborted."
-    discord_embed "$DISCORD_ALERTS" "❌ Backup Failed" "Backup destination $BACKUP_DIR is not mounted. Backup aborted." "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
+    discord_notify "error" "❌ Backup Failed" "Backup destination not mounted."
     exit 1
 fi
 
@@ -153,11 +153,11 @@ if cd "$TEMP_DIR" && zip -rq "$BACKUP_FILE" . ; then
         echo "[✓] Verified: $FILE_COUNT files, archive is valid"
     else
         echo "[✗] Verification FAILED — archive may be corrupt"
-        discord_embed "$DISCORD_ALERTS" "⚠️ Backup Warning" "Backup created ($SIZE) but verification failed — archive may be corrupt." "$DISCORD_COLOR_WARNING" "$SCRIPT_NAME"
+        discord_notify "warning" "⚠️ Backup Warning" "Archive created ($SIZE) but verification failed."
     fi
 else
     echo "[✗] Backup failed (zip error)"
-    discord_embed "$DISCORD_ALERTS" "❌ Backup Failed" "zip command failed. Check disk space and permissions." "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
+    discord_notify "error" "❌ Backup Failed" "zip command failed. Check disk space and permissions."
     exit 1
 fi
 
@@ -178,13 +178,4 @@ echo "Archive: $BACKUP_FILE ($SIZE)"
 echo "Log: $LOG_FILE"
 
 # Discord notification
-discord_embed "$DISCORD_NOTIFICATIONS" "💾 Backup Complete" "⏱️ ${DURATION}s
-
-**Config backup:**
-\`\`\`
-Archive: ${SERVER_HOSTNAME}-backup-${DATE}.zip
-Size:    $SIZE
-Files:   $FILE_COUNT
-\`\`\`
-
-**Old backups cleaned:** $DELETED" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
+discord_notify "success" "💾 Backup Complete" "$SIZE · $FILE_COUNT files"

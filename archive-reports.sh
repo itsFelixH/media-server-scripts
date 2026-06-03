@@ -72,7 +72,7 @@ mkdir -p "$REPORTS_DIR"
 ARCHIVE_MOUNT=$(df "$REPORTS_DIR" 2>/dev/null | awk 'NR==2 {print $6}')
 if [ "$ARCHIVE_MOUNT" = "/" ] && [[ "$REPORTS_DIR" == /mnt/* || "$REPORTS_DIR" == /media/* ]]; then
     echo "[✗] Archive destination $REPORTS_DIR is not mounted. Archiving skipped."
-    discord_embed "$DISCORD_ALERTS" "❌ Report Archive Failed" "Archive destination $REPORTS_DIR is not mounted." "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
+    discord_notify "error" "❌ Report Archive Failed" "Archive destination not mounted."
     exit 1
 fi
 
@@ -113,6 +113,7 @@ done < <(find "$REPORT_DIR" -maxdepth 1 -name "*.md" ! -name "*.prev.md" -type f
 
 if [ "$REPORT_COUNT" -gt 0 ]; then
     echo "[✓] Reports archived: $REPORT_COUNT new, $REPORT_SKIPPED unchanged (skipped)"
+    discord_notify "success" "📋 Reports Archived" "$REPORT_COUNT new reports"
 elif [ "$REPORT_SKIPPED" -gt 0 ]; then
     echo "[✓] Reports: $REPORT_SKIPPED unchanged (nothing to archive)"
 else

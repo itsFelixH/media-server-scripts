@@ -234,11 +234,11 @@ PREV_FINGERPRINT=""
 if [ ${#ISSUES[@]} -gt 0 ]; then
     # Only alert if issues changed (prevents repeated alerts for same problem)
     if [ "$CURRENT_FINGERPRINT" != "$PREV_FINGERPRINT" ]; then
-        msg="❌ [$SERVER_HOSTNAME] Health check failed (${#ISSUES[@]} issue(s)):"
+        desc=""
         for issue in "${ISSUES[@]}"; do
-            msg+=$'\n'"• $issue"
+            desc+="• $issue"$'\n'
         done
-        discord_message "$DISCORD_ALERTS" "$msg"
+        discord_notify "error" "❌ Health Check Failed (${#ISSUES[@]})" "$desc"
     fi
     # Save current issues
     printf '%s' "$CURRENT_FINGERPRINT" > "$LAST_ALERT_FILE"
@@ -249,13 +249,11 @@ fi
 
 # All clear — check if we're recovering from a previous failure
 if [ -n "$PREV_FINGERPRINT" ]; then
-    # Count how many issues were resolved
-    resolved_count=$(echo "$PREV_FINGERPRINT" | grep -c . 2>/dev/null || echo 0)
-    msg="✅ [$SERVER_HOSTNAME] All issues resolved ($resolved_count issue(s) cleared):"
+    desc=""
     while IFS= read -r prev_issue; do
-        [ -n "$prev_issue" ] && msg+=$'\n'"• ~~$prev_issue~~"
+        [ -n "$prev_issue" ] && desc+="• ~~$prev_issue~~"$'\n'
     done <<< "$PREV_FINGERPRINT"
-    discord_message "$DISCORD_ALERTS" "$msg"
+    discord_notify "success" "✅ All Issues Resolved" "$desc"
     rm -f "$LAST_ALERT_FILE"
 fi
 

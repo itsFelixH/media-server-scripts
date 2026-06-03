@@ -362,63 +362,33 @@ fi
 echo "Catalog saved to: $CATALOG_FILE"
 
 # Build Discord message
-DISCORD_DESC="📚 **Library Catalog**
-
-⏱️ ${DURATION}s
-
-**Library:**
-\`\`\`
-Movies:   $MOVIE_COUNT
-TV Shows: $TV_COUNT
-Seasons:  $TOTAL_SEASONS
-Episodes: $TOTAL_EPISODES
-\`\`\`"
+DISCORD_DESC="$MOVIE_COUNT movies · $TV_COUNT shows · $TOTAL_EPISODES episodes"
 
 # Add diff info if available
 if [ -f "$PREV_CATALOG" ]; then
     CHANGES=""
-    [ ${#ADDED_MOVIES[@]} -gt 0 ] && CHANGES+="📥 **+${#ADDED_MOVIES[@]} movies** "
-    [ ${#REMOVED_MOVIES[@]} -gt 0 ] && CHANGES+="📤 -${#REMOVED_MOVIES[@]} movies "
-    [ ${#ADDED_SHOWS[@]} -gt 0 ] && CHANGES+="📥 **+${#ADDED_SHOWS[@]} shows** "
-    [ ${#REMOVED_SHOWS[@]} -gt 0 ] && CHANGES+="📤 -${#REMOVED_SHOWS[@]} shows "
-    [ ${#NEW_SEASONS[@]} -gt 0 ] && CHANGES+="📺 **+${#NEW_SEASONS[@]} new seasons** "
-    [ ${#NEW_EPISODES[@]} -gt 0 ] && CHANGES+="🎞️ **+${#NEW_EPISODES[@]} shows with new episodes**"
+    [ ${#ADDED_MOVIES[@]} -gt 0 ] && CHANGES+="+${#ADDED_MOVIES[@]} movies "
+    [ ${#ADDED_SHOWS[@]} -gt 0 ] && CHANGES+="+${#ADDED_SHOWS[@]} shows "
+    [ ${#NEW_SEASONS[@]} -gt 0 ] && CHANGES+="+${#NEW_SEASONS[@]} seasons "
+    [ ${#NEW_EPISODES[@]} -gt 0 ] && CHANGES+="+${#NEW_EPISODES[@]} episodes "
+    [ ${#REMOVED_MOVIES[@]} -gt 0 ] && CHANGES+="-${#REMOVED_MOVIES[@]} movies "
+    [ ${#REMOVED_SHOWS[@]} -gt 0 ] && CHANGES+="-${#REMOVED_SHOWS[@]} shows "
 
     if [ -n "$CHANGES" ]; then
         DISCORD_DESC+="
-**Changes since last run:**
-$CHANGES"
+
+**Changes:** $CHANGES"
 
         if [ ${#ADDED_MOVIES[@]} -gt 0 ]; then
             DISCORD_DESC+="
-
-**New Movies:**
 \`\`\`
-$(printf '%s\n' "${ADDED_MOVIES[@]}" | head -10)
+$(printf '%s\n' "${ADDED_MOVIES[@]}" | head -5)
 \`\`\`"
         fi
         if [ ${#ADDED_SHOWS[@]} -gt 0 ]; then
             DISCORD_DESC+="
-
-**New Shows:**
 \`\`\`
-$(printf '%s\n' "${ADDED_SHOWS[@]}" | head -10)
-\`\`\`"
-        fi
-        if [ ${#NEW_SEASONS[@]} -gt 0 ]; then
-            DISCORD_DESC+="
-
-**New Seasons:**
-\`\`\`
-$(printf '%s\n' "${NEW_SEASONS[@]}" | head -10)
-\`\`\`"
-        fi
-        if [ ${#NEW_EPISODES[@]} -gt 0 ]; then
-            DISCORD_DESC+="
-
-**New Episodes:**
-\`\`\`
-$(printf '%s\n' "${NEW_EPISODES[@]}" | head -10)
+$(printf '%s\n' "${ADDED_SHOWS[@]}" | head -5)
 \`\`\`"
         fi
     else
@@ -428,4 +398,4 @@ No changes since last run."
     fi
 fi
 
-discord_embed "$DISCORD_NOTIFICATIONS" "📚 Library Catalog" "$DISCORD_DESC" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
+discord_notify "success" "📚 Library Catalog" "$DISCORD_DESC"

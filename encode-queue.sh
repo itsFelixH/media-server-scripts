@@ -303,21 +303,11 @@ TOP_GROUPED=$(awk -F'\t' '{
     printf "%s · %d files · %s · save ~%s\n" "$name" "$file_count" "$size_h" "$est_saved"
 done)
 
-DISCORD_DESC="🔄 **Encode Queue**
+DISCORD_DESC="$NON_HEVC_COUNT files · $(format_size "${TOTAL_NON_HEVC_BYTES:-0}") · save ~$(format_size "${ESTIMATED_SAVINGS:-0}")
 
-📂 \`$DIR_NAMES\`
-⏱️ ${DURATION}s
-
-**Summary:**
-\`\`\`
-Non-HEVC files (>${MIN_SIZE_GB}GB): $NON_HEVC_COUNT
-Total size:    $(format_size "${TOTAL_NON_HEVC_BYTES:-0}")
-Est. savings:  ~$(format_size "${ESTIMATED_SAVINGS:-0}")
-\`\`\`
-
-**Top candidates (by show/movie):**
+**Top candidates:**
 \`\`\`
 $TOP_GROUPED
 \`\`\`"
 
-discord_embed "$DISCORD_NOTIFICATIONS" "🔄 Encode Queue" "$DISCORD_DESC" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
+discord_notify "success" "🔄 Encode Queue" "$DISCORD_DESC"

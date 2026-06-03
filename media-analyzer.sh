@@ -256,8 +256,7 @@ echo
 for d in "${DIRECTORIES[@]}"; do
     if [ ! -d "$d" ]; then
         echo "ERROR: Directory not found: $d"
-        discord_embed "$DISCORD_ALERTS" "❌ Media Analyzer Failed" "Directory not found: \`$d\`
-Mode: $LABEL" "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
+        discord_notify "error" "❌ Media Analyzer Failed" "Directory not found: \`$d\`"
         exit 1
     fi
 done
@@ -268,7 +267,7 @@ NUM_FILES=${#VIDEO_FILES[@]}
 
 if [ "$NUM_FILES" -eq 0 ]; then
     echo "No video files found."
-    discord_embed "$DISCORD_ALERTS" "⚠️ Media Analyzer" "No video files found in \`$DIR_LABEL\`" "$DISCORD_COLOR_WARNING" "$SCRIPT_NAME"
+    discord_notify "warning" "⚠️ Media Analyzer" "No video files found in \`$DIR_LABEL\`"
     exit 0
 fi
 
@@ -554,42 +553,27 @@ if [ "$MATCH_COUNT" -gt 0 ]; then
     [ "$rsd" -gt 0 ] && RES_BREAKDOWN+="SD: $rsd · "
     RES_BREAKDOWN="${RES_BREAKDOWN% · }"
 
-    # Compose Discord message (using code blocks instead of tables)
-    DISCORD_DESC="$EMOJI **$LABEL**
-
-📂 \`$DIR_LABEL\`
-⏱️ ${DURATION}s
-
-**Summary**
-\`\`\`
-Scanned:  $TOTAL_SCANNED files ($TOTAL_HUMAN)
-Matched:  $MATCH_COUNT files ($MATCH_HUMAN)
-Match %:  $PCT%
-\`\`\`
+    # Compose Discord message
+    DISCORD_DESC="$MATCH_COUNT / $TOTAL_SCANNED files · $MATCH_HUMAN matched
 **Codecs:** $CODEC_BREAKDOWN
 **Resolutions:** $RES_BREAKDOWN"
 
     [ "$PROBE_FAILURES" -gt 0 ] && DISCORD_DESC+="
-⚠️ $PROBE_FAILURES files failed to probe"
+⚠️ $PROBE_FAILURES failed to probe"
 
     DISCORD_DESC+="
 
-**Top Matches (by size):**
+**Top matches:**
 \`\`\`
 $TOP_MATCHES
 \`\`\`"
 
-    discord_embed "$DISCORD_NOTIFICATIONS" "$EMOJI Media Analyzer: $LABEL" "$DISCORD_DESC" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
+    discord_notify "success" "🎬 Media Analyzer: $LABEL" "$DISCORD_DESC"
 else
-    DISCORD_DESC="$EMOJI **$LABEL**
-
-📂 \`$DIR_LABEL\`
-⏱️ ${DURATION}s
-
-Scanned **$TOTAL_SCANNED files** ($TOTAL_HUMAN) — no matches found for this filter."
+    DISCORD_DESC="Scanned $TOTAL_SCANNED files ($TOTAL_HUMAN) — no matches."
 
     [ "$PROBE_FAILURES" -gt 0 ] && DISCORD_DESC+="
-⚠️ $PROBE_FAILURES files failed to probe"
+⚠️ $PROBE_FAILURES failed to probe"
 
-    discord_embed "$DISCORD_NOTIFICATIONS" "$EMOJI Media Analyzer: $LABEL" "$DISCORD_DESC" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
+    discord_notify "success" "🎬 Media Analyzer: $LABEL" "$DISCORD_DESC"
 fi

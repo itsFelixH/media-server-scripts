@@ -170,7 +170,7 @@ echo
 
 if [ ! -d "$BASE_PATH" ]; then
     echo "ERROR: Directory not found: $BASE_PATH"
-    discord_embed "$DISCORD_ALERTS" "❌ Storage Report Failed" "Directory not found: \`$BASE_PATH\`" "$DISCORD_COLOR_ERROR" "$SCRIPT_NAME"
+    discord_notify "error" "❌ Storage Report Failed" "Directory not found: \`$BASE_PATH\`"
     exit 1
 fi
 
@@ -464,18 +464,7 @@ for bucket in "4K" "FHD" "HD" "SD"; do
     RES_SUMMARY+="$bucket: $count  "
 done
 
-DISCORD_DESC="📊 **Storage Report**
-
-⏱️ ${DURATION}s
-
-**Summary:**
-\`\`\`
-Directory:  $(basename "$BASE_PATH")
-Folders:    $FOLDER_COUNT
-Files:      $TOTAL_FILES
-Total size: $TOTAL_HUMAN
-\`\`\`
-
+DISCORD_DESC="$TOTAL_FILES files · $TOTAL_HUMAN
 **Resolution:** $RES_SUMMARY
 **Codecs:** $(for c in "HEVC" "H264" "AV1"; do count=${CODEC_COUNTS[$c]:-0}; [ "$count" -gt 0 ] && printf "%s: %d  " "$c" "$count"; done)"
 
@@ -483,13 +472,11 @@ Total size: $TOTAL_HUMAN
 if [ -f "$REPORT_PREV" ] && [ "${FILES_CHANGE:-0}" -ne 0 ] 2>/dev/null; then
     if [ "$FILES_CHANGE" -gt 0 ]; then
         DISCORD_DESC+="
-
-📈 **+$FILES_CHANGE files** since last run"
+📈 +$FILES_CHANGE files since last run"
     else
         DISCORD_DESC+="
-
-📉 **${FILES_CHANGE#-} fewer files** since last run"
+📉 ${FILES_CHANGE#-} fewer files since last run"
     fi
 fi
 
-discord_embed "$DISCORD_NOTIFICATIONS" "📊 Storage Report" "$DISCORD_DESC" "$DISCORD_COLOR_SUCCESS" "$SCRIPT_NAME"
+discord_notify "success" "📊 Storage Report" "$DISCORD_DESC"
