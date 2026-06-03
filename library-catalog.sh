@@ -393,4 +393,7 @@ No changes since last run."
     fi
 fi
 
-discord_notify "success" "📚 Library Catalog" "$DISCORD_DESC"
+# Only notify if there were changes or no previous catalog
+if [ ! -f "$PREV_CATALOG" ] || [ -n "$CHANGES" ]; then
+    discord_notify "success" "📚 Library Catalog" "$DISCORD_DESC"
+fi
