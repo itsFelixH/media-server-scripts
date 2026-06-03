@@ -607,8 +607,14 @@ $(printf '%s\n' "${ISSUES[@]}" | head -5)
 fi
 
 if [ "$ISSUE_COUNT" -gt 0 ]; then
+    DISCORD_DESC+="
+
+See \`reports/metadata-audit.md\` for details."
     discord_notify "error" "🔍 Metadata Audit" "$DISCORD_DESC"
 elif [ "$WARNING_COUNT" -gt 0 ]; then
+    DISCORD_DESC+="
+
+See \`reports/metadata-audit.md\` for details."
     discord_notify "warning" "🔍 Metadata Audit" "$DISCORD_DESC"
 else
     discord_notify "success" "🔍 Metadata Audit" "No issues found."
