@@ -238,7 +238,9 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
         for issue in "${ISSUES[@]}"; do
             desc+="• $issue"$'\n'
         done
-        discord_notify "error" "❌ Health Check Failed (${#ISSUES[@]})" "$desc"
+        # Build a short summary for the title (e.g. "sonarr, disk, temp")
+        title_summary=$(printf '%s\n' "${ISSUES[@]}" | sed 's/Service \([^ ]*\).*/\1/; s/Container \([^ ]*\).*/\1/; s/.*disk.*/disk/i; s/.*memory.*/memory/i; s/.*temperature.*/temp/i; s/.*has not run.*/stale task/i' | sort -u | paste -sd', ')
+        discord_notify "error" "❌ Health Check — $title_summary" "$desc"
     fi
     # Save current issues
     printf '%s' "$CURRENT_FINGERPRINT" > "$LAST_ALERT_FILE"
