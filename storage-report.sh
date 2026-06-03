@@ -471,8 +471,8 @@ for c in "HEVC" "H264" "AV1"; do
 done
 
 DISCORD_DESC="**$TOTAL_FILES** files · **$TOTAL_HUMAN**
-$RES_SUMMARY
-$CODEC_SUMMARY"
+📐 $RES_SUMMARY
+🎞️ $CODEC_SUMMARY"
 
 # Add comparison info if available
 if [ -f "$REPORT_PREV" ] && [ "${FILES_CHANGE:-0}" -ne 0 ] 2>/dev/null; then
