@@ -303,7 +303,8 @@ TOP_GROUPED=$(awk -F'\t' '{
     printf "%s · %d files · %s · save ~%s\n" "$name" "$file_count" "$size_h" "$est_saved"
 done)
 
-DISCORD_DESC="**$NON_HEVC_COUNT** files · $(format_size "${TOTAL_NON_HEVC_BYTES:-0}") → save ~$(format_size "${ESTIMATED_SAVINGS:-0}")
+SAVINGS_PCT=$(( (ESTIMATED_SAVINGS * 100) / (TOTAL_NON_HEVC_BYTES > 0 ? TOTAL_NON_HEVC_BYTES : 1) ))
+DISCORD_DESC="**$NON_HEVC_COUNT** files · $(format_size "${TOTAL_NON_HEVC_BYTES:-0}") → save ~$(format_size "${ESTIMATED_SAVINGS:-0}") (${SAVINGS_PCT}%)
 \`\`\`
 $(echo "$TOP_GROUPED" | head -5)
 \`\`\`"
