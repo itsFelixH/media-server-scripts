@@ -170,7 +170,9 @@ echo
 
 if [ ! -d "$BASE_PATH" ]; then
     echo "ERROR: Directory not found: $BASE_PATH"
-    discord_notify "error" "❌ Storage Report Failed" "Directory not found: \`$BASE_PATH\`"
+    discord_notify "error" "❌ Storage Report Failed" "Directory not found: \`$BASE_PATH\`
+
+See \`reports/storage-report.md\` for last successful run."
     exit 1
 fi
 
