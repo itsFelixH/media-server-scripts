@@ -200,6 +200,7 @@ discord_notify() {
             color=$DISCORD_COLOR_SUCCESS
             ;;
         warning)
+            [ "$NOTIFY_ON_FAILURE" != true ] && return
             webhook="$DISCORD_ALERTS"
             color=$DISCORD_COLOR_WARNING
             ;;
