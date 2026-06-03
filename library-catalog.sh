@@ -395,5 +395,13 @@ fi
 
 # Only notify if there were changes or no previous catalog
 if [ ! -f "$PREV_CATALOG" ] || [ -n "$CHANGES" ]; then
-    discord_notify "success" "📚 Library Catalog" "$DISCORD_DESC"
+    HAS_REMOVALS=false
+    [ ${#REMOVED_MOVIES[@]} -gt 0 ] && HAS_REMOVALS=true
+    [ ${#REMOVED_SHOWS[@]} -gt 0 ] && HAS_REMOVALS=true
+
+    if [ "$HAS_REMOVALS" = true ]; then
+        discord_notify "warning" "📚 Library Catalog" "$DISCORD_DESC"
+    else
+        discord_notify "success" "📚 Library Catalog" "$DISCORD_DESC"
+    fi
 fi
