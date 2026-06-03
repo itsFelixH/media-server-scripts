@@ -121,7 +121,9 @@ mkdir -p "$TEMP_DIR"/{kometa/{config,scripts},UMTK/config,ImageMaid/config,docke
 # --- Kometa config ---
 echo "Collecting Kometa config..."
 cp "$KOMETA_CONFIG"/*.yml "$TEMP_DIR/kometa/config/" 2>/dev/null
-cp -r "$METADATA_DIR" "$TEMP_DIR/kometa/config/" 2>/dev/null
+if find "$METADATA_DIR" -name "*.yml" 2>/dev/null | grep -q .; then
+    cp -r "$METADATA_DIR" "$TEMP_DIR/kometa/config/" 2>/dev/null
+fi
 
 # --- Scripts config ---
 echo "Collecting scripts config..."
