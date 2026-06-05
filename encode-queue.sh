@@ -260,53 +260,23 @@ DIR_NAMES="${DIR_NAMES%, }"
         printf "| %3d | \`%s\` | %s | %s | %s | %s |\n" "$RANK" "$rel_path_escaped" "$size_h" "$codec" "$resolution" "$est_saved"
     done <<< "$QUEUE"
     echo ""
-    echo "---"
-    echo ""
-    echo "## 📂 Grouped by Show/Movie"
-    echo ""
-    echo "| Show/Movie | Files | Total Size | Est. Savings |"
-    echo "|------------|-------|-----------|--------------|"
-    awk -F'\t' '{
-        split($1, parts, "/")
-        name = parts[1]
-        sizes[name] += $2
-        counts[name]++
-    } END {
-        for (name in sizes) {
-            printf "%s\t%.0f\t%d\n", name, sizes[name], counts[name]
-        }
-    }' "$TMP_FILE" | sort -t$'\t' -k2 -rn | while IFS=$'\t' read -r name total_bytes file_count; do
-        size_h=$(format_size "$total_bytes")
-        est_saved=$(format_size $((total_bytes * (100 - HEVC_RATIO) / 100)))
-        name_escaped=$(printf '%s' "$name" | sed 's/|/\\|/g')
-        printf "| %s | %d | %s | %s |\n" "$name_escaped" "$file_count" "$size_h" "$est_saved"
-    done
-    echo ""
 } > "$REPORT_FILE"
 
 echo "Report saved to: $REPORT_FILE"
 echo "Log saved to: $LOG_FILE"
 
-# Discord notification — grouped by show/movie
-TOP_GROUPED=$(awk -F'\t' '{
-    split($1, parts, "/")
-    name = parts[1]
-    sizes[name] += $2
-    counts[name]++
-} END {
-    for (name in sizes) {
-        printf "%s\t%.0f\t%d\n", name, sizes[name], counts[name]
-    }
-}' "$TMP_FILE" | sort -t$'\t' -k2 -rn | head -10 | while IFS=$'\t' read -r name total_bytes file_count; do
-    size_h=$(format_size "$total_bytes")
-    est_saved=$(format_size $((total_bytes * (100 - HEVC_RATIO) / 100)))
-    printf "%s · %d files · %s · save ~%s\n" "$name" "$file_count" "$size_h" "$est_saved"
+# Discord notification
+TOP_FILES=$(echo "$QUEUE" | head -5 | while IFS=$'\t' read -r rel_path size_bytes codec resolution full_path; do
+    name=$(echo "$rel_path" | cut -d'/' -f1)
+    size_h=$(format_size "$size_bytes")
+    est_saved=$(format_size $((size_bytes * (100 - HEVC_RATIO) / 100)))
+    printf "%s · %s · save ~%s\n" "$name" "$size_h" "$est_saved"
 done)
 
 SAVINGS_PCT=$(( (ESTIMATED_SAVINGS * 100) / (TOTAL_NON_HEVC_BYTES > 0 ? TOTAL_NON_HEVC_BYTES : 1) ))
 DISCORD_DESC="**$NON_HEVC_COUNT** files · $(format_size "${TOTAL_NON_HEVC_BYTES:-0}") → save ~$(format_size "${ESTIMATED_SAVINGS:-0}") (${SAVINGS_PCT}%)
 \`\`\`
-$(echo "$TOP_GROUPED" | head -5)
+$TOP_FILES
 \`\`\`"
 
 discord_notify "success" "🔄 Encode Queue" "$DISCORD_DESC"
