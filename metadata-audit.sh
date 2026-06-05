@@ -191,13 +191,22 @@ echo
 # --- 4. Orphaned metadata (entries not in library) ---
 echo "Checking for orphaned metadata..."
 ORPHANED_MOVIES=0
+UPCOMING_MOVIES=0
+CURRENT_YEAR=$(date +%Y)
 for id in "${MOVIE_META_IDS[@]}"; do
     if ! printf '%s\n' "${LIBRARY_MOVIE_IDS[@]}" | grep -qx "$id"; then
         # Try to resolve the ID to a name from the metadata comment
         movie_name=$(grep -P "^\s+${id}:" "$METADATA_DIR/movies.yml" 2>/dev/null | grep -oP '#\s*\K.*' | sed 's/ Poster by.*//;s/ Set by.*//')
         [ -z "$movie_name" ] && movie_name="TMDb $id"
-        WARNINGS+=("Orphaned movie metadata: $movie_name (TMDb $id)")
-        ((ORPHANED_MOVIES++))
+        # Check if this is an upcoming release (year >= current year)
+        movie_year=$(echo "$movie_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
+        if [ -n "$movie_year" ] && [ "$movie_year" -ge "$CURRENT_YEAR" ]; then
+            WARNINGS+=("Upcoming movie metadata: $movie_name (TMDb $id)")
+            ((UPCOMING_MOVIES++))
+        else
+            WARNINGS+=("Orphaned movie metadata: $movie_name (TMDb $id)")
+            ((ORPHANED_MOVIES++))
+        fi
     fi
 done
 
@@ -209,6 +218,7 @@ for name in "${TV_META_NAMES[@]}"; do
     fi
 done
 echo "  Orphaned movie entries: $ORPHANED_MOVIES"
+echo "  Upcoming movie entries: $UPCOMING_MOVIES"
 echo "  Orphaned TV entries: $ORPHANED_TV"
 echo
 
@@ -480,6 +490,19 @@ fi
             done
             echo ""
         fi
+    fi
+
+    if [ "$UPCOMING_MOVIES" -gt 0 ]; then
+        echo "---"
+        echo ""
+        echo "## Upcoming (Not Yet in Library)"
+        echo ""
+        echo "Metadata for movies releasing in $CURRENT_YEAR or later. These are expected to be orphaned until added."
+        echo ""
+        for warning in "${WARNINGS[@]}"; do
+            [[ "$warning" == "Upcoming movie metadata:"* ]] && echo "- ${warning#Upcoming movie metadata: }"
+        done
+        echo ""
     fi
 
     if [ "$MISSING_MOVIES" -gt 0 ] || [ "$MISSING_TV" -gt 0 ]; then
