@@ -440,6 +440,8 @@ fi
     echo "| TV metadata entries | ${#TV_META_IDS[@]} |"
     echo "| Issues (errors) | $ISSUE_COUNT |"
     echo "| Warnings | $WARNING_COUNT |"
+    echo "| Orphaned | $((ORPHANED_MOVIES + ORPHANED_TV)) |"
+    echo "| Upcoming (not in library yet) | $UPCOMING_MOVIES |"
     echo "| Duplicates | $((DUPE_MOVIE_COUNT + DUPE_TV_COUNT)) |"
     echo ""
 
