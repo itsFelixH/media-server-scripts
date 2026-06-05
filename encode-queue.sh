@@ -1,7 +1,8 @@
 #!/bin/bash
 # Encode Queue
-# Generates a prioritized re-encode list from non-HEVC files.
-# Largest files first, with estimated space savings.
+# Generates a prioritized re-encode list and optimization suggestions.
+# Finds non-HEVC files, biggest TV shows, and HEVC files that could
+# benefit from AV1 re-encode or resolution reduction.
 #
 # Usage:
 #   ./encode-queue.sh [options] [directory]
@@ -16,15 +17,16 @@
 ####### HELP #######
 show_help() {
     cat <<'HELP'
-Encode Queue — Generates a prioritized re-encode list.
+Encode Queue — Generates a prioritized re-encode list and optimization suggestions.
 
 Usage: encode-queue.sh [options] [directory]
 
-Scans for non-HEVC video files and generates a prioritized list for
-re-encoding to HEVC/x265. Sorted by size (largest first) for maximum
-space savings. Estimates savings based on typical HEVC compression ratios.
+Scans video files and generates:
+  1. Non-HEVC/AV1 files to re-encode (sorted by size, largest first)
+  2. Biggest TV shows by total size
+  3. Large HEVC files that could benefit from AV1 or resolution reduction
 
-Does NOT perform any encoding — only generates the queue.
+Does NOT perform any encoding — only generates the report.
 
 Options:
   -h, --help        Show this help message
@@ -33,7 +35,7 @@ Options:
   --limit=N         Limit output to N files (default: 50)
   --min-size=N      Minimum file size in GB to include (default: 1)
 
-Defaults to /mnt/Media/TV Shows if no directory is specified.
+Defaults to Movies + TV Shows if no directory is specified.
 HELP
 }
 
@@ -261,6 +263,133 @@ DIR_NAMES="${DIR_NAMES%, }"
     done <<< "$QUEUE"
     echo ""
 } > "$REPORT_FILE"
+
+# --- Additional analysis: biggest TV shows and optimization suggestions ---
+echo "Analyzing TV show sizes..."
+
+# Biggest TV shows by total size
+if [ -d "$TV_DIR" ]; then
+    TV_SIZES_TMP=$(mktemp)
+    trap 'rm -f "$TMP_FILE" "$TV_SIZES_TMP"' EXIT
+
+    # Sum file sizes per show (top-level directory)
+    for show_dir in "$TV_DIR"/*/; do
+        [ -d "$show_dir" ] || continue
+        show_name=$(basename "$show_dir")
+        show_name_clean=$(printf '%s' "$show_name" | sed 's/ {tmdb-[0-9]*}//g; s/ {tvdb-[0-9]*}//g')
+        total_bytes=$(find "$show_dir" -type f \( -iname "*.mkv" -o -iname "*.mp4" \) -printf '%s\n' 2>/dev/null | awk '{sum+=$1} END {printf "%.0f", sum+0}')
+        [ "$total_bytes" -gt 0 ] && printf "%s\t%s\n" "$show_name_clean" "$total_bytes" >> "$TV_SIZES_TMP"
+    done
+
+    TOP_SHOWS=$(sort -t$'\t' -k2 -rn "$TV_SIZES_TMP" | head -20)
+
+    # Append to report
+    {
+        echo ""
+        echo "---"
+        echo ""
+        echo "## 📺 Biggest TV Shows (Top 20)"
+        echo ""
+        echo "| Show | Total Size | Suggestion |"
+        echo "|------|-----------|------------|"
+        while IFS=$'\t' read -r name total_bytes; do
+            size_h=$(format_size "$total_bytes")
+            # Suggestion logic
+            suggestion=""
+            if [ "$total_bytes" -gt 53687091200 ]; then  # >50GB
+                suggestion="Consider AV1 re-encode"
+            elif [ "$total_bytes" -gt 21474836480 ]; then  # >20GB
+                suggestion="Good AV1 candidate"
+            fi
+            name_escaped=$(printf '%s' "$name" | sed 's/|/\\|/g')
+            printf "| %s | %s | %s |\n" "$name_escaped" "$size_h" "$suggestion"
+        done <<< "$TOP_SHOWS"
+        echo ""
+    } >> "$REPORT_FILE"
+
+    rm -f "$TV_SIZES_TMP"
+fi
+
+# Optimization suggestions: large HEVC files that could benefit from AV1 or resolution reduction
+echo "Scanning for optimization candidates..."
+OPT_TMP=$(mktemp)
+trap 'rm -f "$TMP_FILE" "$OPT_TMP"' EXIT
+
+OPT_COUNT=0
+OPT_COUNTER=0
+for file in "${VIDEO_FILES[@]}"; do
+    OPT_COUNTER=$((OPT_COUNTER + 1))
+    size_bytes=$(stat -c%s "$file" 2>/dev/null || echo 0)
+
+    # Only look at large files (>3GB)
+    [ "$size_bytes" -lt 3221225472 ] && continue
+
+    probe_output=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,height -of "csv=s=,:p=0" "$file" 2>/dev/null)
+    codec=$(printf '%s' "$probe_output" | cut -d',' -f1 | tr -d '[:space:]')
+    height=$(printf '%s' "$probe_output" | cut -d',' -f2 | tr -d '[:space:]')
+
+    # Only interested in HEVC files (already encoded but still large)
+    [ "$codec" != "hevc" ] && continue
+    [ -z "$height" ] && continue
+
+    # Determine suggestion
+    suggestion=""
+    if [ "$height" -ge 2160 ]; then
+        suggestion="4K → consider 1080p if not HDR"
+    elif [ "$height" -ge 1080 ] && [ "$size_bytes" -gt 5368709120 ]; then  # 1080p and >5GB
+        suggestion="Large 1080p → AV1 re-encode"
+    elif [ "$height" -ge 1080 ] && [ "$size_bytes" -gt 3221225472 ]; then  # 1080p and >3GB
+        suggestion="AV1 candidate"
+    else
+        continue
+    fi
+
+    rel_path="$file"
+    for d in "${DIRECTORIES[@]}"; do
+        rel_path="${rel_path#$d/}"
+    done
+    rel_path=$(printf '%s' "$rel_path" | sed 's/ {tmdb-[0-9]*}//g; s/ {tvdb-[0-9]*}//g')
+
+    printf "%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "${height}p" "$suggestion" >> "$OPT_TMP"
+    OPT_COUNT=$((OPT_COUNT + 1))
+
+    if [ $((OPT_COUNTER % 50)) -eq 0 ]; then
+        printf "\r  Progress: %d/%d" "$OPT_COUNTER" "$NUM_FILES"
+    fi
+done
+printf "\r  Optimization candidates: %d\n" "$OPT_COUNT"
+
+if [ "$OPT_COUNT" -gt 0 ]; then
+    OPT_QUEUE=$(sort -t$'\t' -k2 -rn "$OPT_TMP" | head -20)
+    OPT_TOTAL=$(awk -F'\t' '{sum += $2} END {printf "%.0f", sum+0}' "$OPT_TMP")
+    # Estimate 30% savings for AV1 over HEVC
+    OPT_SAVINGS=$(awk -F'\t' '{sum += $2} END {printf "%.0f", sum * 30 / 100}' "$OPT_TMP")
+
+    {
+        echo "---"
+        echo ""
+        echo "## 🚀 Optimization Suggestions (HEVC → AV1 / Resolution)"
+        echo ""
+        echo "Already encoded in HEVC but still large. Further savings possible with AV1 (~30% smaller) or resolution reduction."
+        echo ""
+        echo "| Metric | Value |"
+        echo "|--------|-------|"
+        echo "| Candidates | $OPT_COUNT |"
+        echo "| Total size | $(format_size "$OPT_TOTAL") |"
+        echo "| Est. savings (AV1) | ~$(format_size "$OPT_SAVINGS") |"
+        echo ""
+        echo "| File | Size | Resolution | Suggestion |"
+        echo "|------|------|-----------|------------|"
+        while IFS=$'\t' read -r rel_path size_bytes resolution suggestion; do
+            size_h=$(format_size "$size_bytes")
+            rel_path_escaped=$(printf '%s' "$rel_path" | sed 's/|/\\|/g')
+            printf "| \`%s\` | %s | %s | %s |\n" "$rel_path_escaped" "$size_h" "$resolution" "$suggestion"
+        done <<< "$OPT_QUEUE"
+        echo ""
+    } >> "$REPORT_FILE"
+fi
+
+rm -f "$OPT_TMP"
 
 echo "Report saved to: $REPORT_FILE"
 echo "Log saved to: $LOG_FILE"
