@@ -142,46 +142,42 @@ done
 echo "Scanning for video files..."
 mapfile -t VIDEO_FILES < <(find "${DIRECTORIES[@]}" -type f \( -iname "*.mkv" -o -iname "*.mp4" \) 2>/dev/null | sort)
 NUM_FILES=${#VIDEO_FILES[@]}
-echo "Found $NUM_FILES video files. Filtering non-HEVC..."
+echo "Found $NUM_FILES video files. Probing..."
 echo
 
-# Scan and collect non-HEVC files above minimum size
+# Single pass: probe all files and cache results
+# Format: rel_path \t size_bytes \t codec \t height \t full_path
+PROBE_CACHE=$(mktemp)
 TMP_FILE=$(mktemp)
-trap 'rm -f "$TMP_FILE"' EXIT
+OPT_TMP=$(mktemp)
+TV_SIZES_TMP=$(mktemp)
+cleanup() { rm -f "$PROBE_CACHE" "$TMP_FILE" "$OPT_TMP" "$TV_SIZES_TMP"; }
+trap cleanup EXIT
 
 COUNTER=0
-NON_HEVC_COUNT=0
-
 for file in "${VIDEO_FILES[@]}"; do
     COUNTER=$((COUNTER + 1))
 
     size_bytes=$(stat -c%s "$file" 2>/dev/null || echo 0)
 
-    # Skip files below minimum size
+    # Skip very small files (not worth probing)
     [ "$size_bytes" -lt "$MIN_SIZE_BYTES" ] && continue
 
-    # Get codec and resolution in a single ffprobe call
+    # Get codec and height in a single ffprobe call
     probe_output=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,height -of "csv=s=,:p=0" "$file" 2>/dev/null)
     codec=$(printf '%s' "$probe_output" | cut -d',' -f1 | tr -d '[:space:]')
-    resolution=$(printf '%s' "$probe_output" | cut -d',' -f2 | tr -d '[:space:]')
+    height=$(printf '%s' "$probe_output" | cut -d',' -f2 | tr -d '[:space:]')
 
-    # Skip HEVC and AV1 (already efficient)
-    [ "$codec" = "hevc" ] && continue
-    [ "$codec" = "av1" ] && continue
     [ -z "$codec" ] && continue
-
-    [ -n "$resolution" ] && resolution="${resolution}p" || resolution="N/A"
-
-    NON_HEVC_COUNT=$((NON_HEVC_COUNT + 1))
 
     # Clean path for display
     rel_path="$file"
     for d in "${DIRECTORIES[@]}"; do
         rel_path="${rel_path#$d/}"
     done
-    rel_path=$(printf '%s' "$rel_path" | sed 's/ {tmdb-[0-9]*}//g')
+    rel_path=$(printf '%s' "$rel_path" | sed 's/ {tmdb-[0-9]*}//g; s/ {tvdb-[0-9]*}//g')
 
-    printf "%s\t%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "$codec" "$resolution" "$file" >> "$TMP_FILE"
+    printf "%s\t%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "$codec" "${height:-0}" "$file" >> "$PROBE_CACHE"
 
     # Progress
     if [ $((COUNTER % 50)) -eq 0 ]; then
@@ -190,6 +186,17 @@ for file in "${VIDEO_FILES[@]}"; do
 done
 printf "\r  Progress: %d/%d\n" "$NUM_FILES" "$NUM_FILES"
 echo
+
+# --- Extract non-HEVC/non-AV1 files for encode queue ---
+NON_HEVC_COUNT=0
+while IFS=$'\t' read -r rel_path size_bytes codec height full_path; do
+    [ "$codec" = "hevc" ] && continue
+    [ "$codec" = "av1" ] && continue
+    resolution="${height}p"
+    [ "$height" = "0" ] && resolution="N/A"
+    printf "%s\t%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "$codec" "$resolution" "$full_path" >> "$TMP_FILE"
+    NON_HEVC_COUNT=$((NON_HEVC_COUNT + 1))
+done < "$PROBE_CACHE"
 
 # Sort by size descending and limit
 QUEUE=$(sort -t$'\t' -k2 -rn "$TMP_FILE" | head -"$LIMIT")
@@ -267,12 +274,9 @@ DIR_NAMES="${DIR_NAMES%, }"
 # --- Additional analysis: biggest TV shows and optimization suggestions ---
 echo "Analyzing TV show sizes..."
 
-# Biggest TV shows by total size
+# Biggest TV shows by total size (from probe cache — only includes files >= min_size)
+# Also check full filesystem for complete picture
 if [ -d "$TV_DIR" ]; then
-    TV_SIZES_TMP=$(mktemp)
-    trap 'rm -f "$TMP_FILE" "$TV_SIZES_TMP"' EXIT
-
-    # Sum file sizes per show (top-level directory)
     for show_dir in "$TV_DIR"/*/; do
         [ -d "$show_dir" ] || continue
         show_name=$(basename "$show_dir")
@@ -283,7 +287,6 @@ if [ -d "$TV_DIR" ]; then
 
     TOP_SHOWS=$(sort -t$'\t' -k2 -rn "$TV_SIZES_TMP" | head -20)
 
-    # Append to report
     {
         echo ""
         echo "---"
@@ -294,7 +297,6 @@ if [ -d "$TV_DIR" ]; then
         echo "|------|-----------|------------|"
         while IFS=$'\t' read -r name total_bytes; do
             size_h=$(format_size "$total_bytes")
-            # Suggestion logic
             suggestion=""
             if [ "$total_bytes" -gt 53687091200 ]; then  # >50GB
                 suggestion="Consider AV1 re-encode"
@@ -306,63 +308,35 @@ if [ -d "$TV_DIR" ]; then
         done <<< "$TOP_SHOWS"
         echo ""
     } >> "$REPORT_FILE"
-
-    rm -f "$TV_SIZES_TMP"
 fi
 
-# Optimization suggestions: large HEVC files that could benefit from AV1 or resolution reduction
-echo "Scanning for optimization candidates..."
-OPT_TMP=$(mktemp)
-trap 'rm -f "$TMP_FILE" "$OPT_TMP"' EXIT
-
+# Optimization suggestions: large HEVC files from probe cache
+echo "Extracting optimization candidates from cache..."
 OPT_COUNT=0
-OPT_COUNTER=0
-for file in "${VIDEO_FILES[@]}"; do
-    OPT_COUNTER=$((OPT_COUNTER + 1))
-    size_bytes=$(stat -c%s "$file" 2>/dev/null || echo 0)
-
-    # Only look at large files (>3GB)
-    [ "$size_bytes" -lt 3221225472 ] && continue
-
-    probe_output=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,height -of "csv=s=,:p=0" "$file" 2>/dev/null)
-    codec=$(printf '%s' "$probe_output" | cut -d',' -f1 | tr -d '[:space:]')
-    height=$(printf '%s' "$probe_output" | cut -d',' -f2 | tr -d '[:space:]')
-
-    # Only interested in HEVC files (already encoded but still large)
+while IFS=$'\t' read -r rel_path size_bytes codec height full_path; do
     [ "$codec" != "hevc" ] && continue
-    [ -z "$height" ] && continue
+    [ "$size_bytes" -lt 3221225472 ] && continue  # Skip < 3GB
 
-    # Determine suggestion
     suggestion=""
     if [ "$height" -ge 2160 ]; then
         suggestion="4K → consider 1080p if not HDR"
-    elif [ "$height" -ge 1080 ] && [ "$size_bytes" -gt 5368709120 ]; then  # 1080p and >5GB
+    elif [ "$height" -ge 1080 ] && [ "$size_bytes" -gt 5368709120 ]; then
         suggestion="Large 1080p → AV1 re-encode"
-    elif [ "$height" -ge 1080 ] && [ "$size_bytes" -gt 3221225472 ]; then  # 1080p and >3GB
+    elif [ "$height" -ge 1080 ] && [ "$size_bytes" -gt 3221225472 ]; then
         suggestion="AV1 candidate"
     else
         continue
     fi
 
-    rel_path="$file"
-    for d in "${DIRECTORIES[@]}"; do
-        rel_path="${rel_path#$d/}"
-    done
-    rel_path=$(printf '%s' "$rel_path" | sed 's/ {tmdb-[0-9]*}//g; s/ {tvdb-[0-9]*}//g')
-
-    printf "%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "${height}p" "$suggestion" >> "$OPT_TMP"
+    printf "%s\t%s\t%sp\t%s\n" "$rel_path" "$size_bytes" "$height" "$suggestion" >> "$OPT_TMP"
     OPT_COUNT=$((OPT_COUNT + 1))
+done < "$PROBE_CACHE"
 
-    if [ $((OPT_COUNTER % 50)) -eq 0 ]; then
-        printf "\r  Progress: %d/%d" "$OPT_COUNTER" "$NUM_FILES"
-    fi
-done
-printf "\r  Optimization candidates: %d\n" "$OPT_COUNT"
+echo "  Optimization candidates: $OPT_COUNT"
 
 if [ "$OPT_COUNT" -gt 0 ]; then
     OPT_QUEUE=$(sort -t$'\t' -k2 -rn "$OPT_TMP" | head -20)
     OPT_TOTAL=$(awk -F'\t' '{sum += $2} END {printf "%.0f", sum+0}' "$OPT_TMP")
-    # Estimate 30% savings for AV1 over HEVC
     OPT_SAVINGS=$(awk -F'\t' '{sum += $2} END {printf "%.0f", sum * 30 / 100}' "$OPT_TMP")
 
     {
@@ -388,8 +362,6 @@ if [ "$OPT_COUNT" -gt 0 ]; then
         echo ""
     } >> "$REPORT_FILE"
 fi
-
-rm -f "$OPT_TMP"
 
 echo "Report saved to: $REPORT_FILE"
 echo "Log saved to: $LOG_FILE"
