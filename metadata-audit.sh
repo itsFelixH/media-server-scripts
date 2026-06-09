@@ -93,6 +93,15 @@ get_library_movie_ids() {
         grep -oP '\{tmdb-\K[0-9]+' | sort -u
 }
 
+# Normalize a name for comparison:
+#   - Strip filesystem-unsafe characters: : ? * " < > |
+#   - Normalize dashes: en-dash (–), em-dash (—) → hyphen (-)
+#   - Strip bracket suffixes like [B&W] or [Full Hue]
+#   - Collapse multiple spaces
+normalize_name() {
+    echo "$1" | sed 's/[:\?\*"<>|]//g; s/\xE2\x80\x93/-/g; s/\xE2\x80\x94/-/g; s/ *\[.*\]//g; s/  */ /g; s/^ //; s/ $//'
+}
+
 # Extract TV show names from disk (lowercase for comparison, preserve original)
 get_library_tv_names() {
     find "$TV_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | while read -r dir; do
@@ -211,8 +220,22 @@ for id in "${MOVIE_META_IDS[@]}"; do
 done
 
 ORPHANED_TV=0
+# Build normalized library name list for comparison
+LIBRARY_TV_NAMES_NORMALIZED=()
+for lib_name in "${LIBRARY_TV_NAMES[@]}"; do
+    LIBRARY_TV_NAMES_NORMALIZED+=("$(normalize_name "$lib_name" | tr '[:upper:]' '[:lower:]')")
+done
+
 for name in "${TV_META_NAMES[@]}"; do
-    if ! printf '%s\n' "${LIBRARY_TV_NAMES[@]}" | grep -iqxF "$name"; then
+    norm_meta="$(normalize_name "$name" | tr '[:upper:]' '[:lower:]')"
+    found=false
+    for norm_lib in "${LIBRARY_TV_NAMES_NORMALIZED[@]}"; do
+        if [ "$norm_meta" = "$norm_lib" ]; then
+            found=true
+            break
+        fi
+    done
+    if [ "$found" = false ]; then
         WARNINGS+=("Orphaned TV metadata: $name")
         ((ORPHANED_TV++))
     fi
@@ -234,8 +257,22 @@ for id in "${LIBRARY_MOVIE_IDS[@]}"; do
 done
 
 MISSING_TV=0
+# Build normalized metadata name list for comparison
+TV_META_NAMES_NORMALIZED=()
+for meta_name in "${TV_META_NAMES[@]}"; do
+    TV_META_NAMES_NORMALIZED+=("$(normalize_name "$meta_name" | tr '[:upper:]' '[:lower:]')")
+done
+
 for name in "${LIBRARY_TV_NAMES[@]}"; do
-    if ! printf '%s\n' "${TV_META_NAMES[@]}" | grep -iqxF "$name"; then
+    norm_lib="$(normalize_name "$name" | tr '[:upper:]' '[:lower:]')"
+    found=false
+    for norm_meta in "${TV_META_NAMES_NORMALIZED[@]}"; do
+        if [ "$norm_lib" = "$norm_meta" ]; then
+            found=true
+            break
+        fi
+    done
+    if [ "$found" = false ]; then
         WARNINGS+=("Missing TV metadata: $name")
         ((MISSING_TV++))
     fi
