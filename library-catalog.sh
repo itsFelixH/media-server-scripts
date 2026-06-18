@@ -207,7 +207,7 @@ if [ -f "$PREV_CATALOG" ]; then
     done < <(comm -23 <(echo "$PREV_MOVIES" | sort) <(echo "$CURR_MOVIES" | sort))
 
     # Extract TV show lists (name only)
-    PREV_SHOWS=$(sed -n '/^## TV Shows/,$ p' "$PREV_CATALOG" | grep '^- ' | sed 's/^- \*\*//;s/\*\*.*//')
+    PREV_SHOWS=$(sed -n '/^## TV Shows/,/^---$/p' "$PREV_CATALOG" | grep '^- ' | sed 's/^- \*\*//;s/\*\*.*//')
     CURR_SHOWS=$(printf '%s\n' "${TV_LIST[@]}")
 
     while IFS= read -r show; do
@@ -244,7 +244,7 @@ if [ -f "$PREV_CATALOG" ]; then
                 break
             fi
         done
-    done < <(sed -n '/^## TV Shows/,$ p' "$PREV_CATALOG" | grep '^- ')
+    done < <(sed -n '/^## TV Shows/,/^---$/p' "$PREV_CATALOG" | grep '^- ')
 
     echo "  Added movies: ${#ADDED_MOVIES[@]}"
     echo "  Removed movies: ${#REMOVED_MOVIES[@]}"
