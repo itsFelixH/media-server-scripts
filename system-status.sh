@@ -75,32 +75,79 @@ fi
 # --- Last run times ---
 last_runs_json="[]"
 
-# Kometa — meta.log modification time + run duration
-kometa_duration=""
+add_last_run() {
+    local name="$1" ts="$2" duration="${3:-}"
+    last_runs_json=$(echo "$last_runs_json" | jq --arg name "$name" --argjson ts "$ts" --arg duration "$duration" '. + [{"name": $name, "timestamp": $ts, "duration": $duration}]')
+}
+
+# Kometa
 if [ -f "$KOMETA_CONFIG/logs/meta.log" ]; then
     ts=$(stat -c '%Y' "$KOMETA_CONFIG/logs/meta.log")
-    kometa_duration=$(grep "Run Time:" "$KOMETA_CONFIG/logs/meta.log" | tail -1 | grep -oP 'Run Time: \K[0-9:]+')
-    last_runs_json=$(echo "$last_runs_json" | jq --arg name "Kometa" --argjson ts "$ts" --arg duration "${kometa_duration:-}" '. + [{"name": $name, "timestamp": $ts, "duration": $duration}]')
+    dur=$(grep "Run Time:" "$KOMETA_CONFIG/logs/meta.log" | tail -1 | grep -oP 'Run Time: \K[0-9:]+')
+    add_last_run "Kometa" "$ts" "${dur:-}"
 fi
 
-# UMTK — latest log file
+# UMTK
 umtk_latest=$(ls -t "$UMTK_LOGS_DIR"/UMTK_*.log 2>/dev/null | head -1)
 if [ -n "$umtk_latest" ]; then
     ts=$(stat -c '%Y' "$umtk_latest")
-    last_runs_json=$(echo "$last_runs_json" | jq --arg name "UMTK" --argjson ts "$ts" '. + [{"name": $name, "timestamp": $ts}]')
+    dur=$(grep "Total runtime:" "$umtk_latest" 2>/dev/null | tail -1 | grep -oP 'Total runtime: \K[0-9:]+')
+    add_last_run "UMTK" "$ts" "${dur:-}"
 fi
 
-# ImageMaid — imagemaid.log modification time
+# ImageMaid
 if [ -f "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log" ]; then
     ts=$(stat -c '%Y' "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log")
-    last_runs_json=$(echo "$last_runs_json" | jq --arg name "ImageMaid" --argjson ts "$ts" '. + [{"name": $name, "timestamp": $ts}]')
+    add_last_run "ImageMaid" "$ts"
 fi
 
-# PlexTraktSync — latest log
+# PlexTraktSync
 pts_latest=$(ls -t "$LOG_DIR/plextraktsync"/plextraktsync_*.log 2>/dev/null | head -1)
 if [ -n "$pts_latest" ]; then
     ts=$(stat -c '%Y' "$pts_latest")
-    last_runs_json=$(echo "$last_runs_json" | jq --arg name "PlexTraktSync" --argjson ts "$ts" '. + [{"name": $name, "timestamp": $ts}]')
+    add_last_run "PlexTraktSync" "$ts"
+fi
+
+# --- Plex server info (cached every 5 minutes) ---
+PLEX_CACHE="$REPORT_DIR/.plex-info-cache"
+plex_json='{}'
+
+if [ ! -f "$PLEX_CACHE" ] || [ $(( $(date +%s) - $(stat -c %Y "$PLEX_CACHE") )) -gt 300 ]; then
+    plex_data=$(curl -s --max-time 5 "$PLEX_URL/?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null)
+    if [ -n "$plex_data" ]; then
+        echo "$plex_data" | jq '{
+            version: .MediaContainer.version,
+            platform: .MediaContainer.platform,
+            platform_version: .MediaContainer.platformVersion,
+            transcoder_active: (.MediaContainer.transcoderActiveVideoSessions // 0)
+        }' > "$PLEX_CACHE" 2>/dev/null
+    fi
+fi
+[ -f "$PLEX_CACHE" ] && plex_json=$(cat "$PLEX_CACHE")
+
+# --- Metadata audit summary (from report, no disk access) ---
+audit_json='{}'
+if [ -f "$REPORT_DIR/metadata-audit.md" ]; then
+    audit_orphaned=$(awk -F'|' '/\| Orphaned \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+    audit_warnings=$(awk -F'|' '/\| Warnings \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+    audit_duplicates=$(awk -F'|' '/\| Duplicates \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+    audit_issues=$(awk -F'|' '/\| Issues \(errors\) \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+    audit_upcoming=$(awk -F'|' '/\| Upcoming/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+    audit_json=$(jq -n \
+        --argjson orphaned "${audit_orphaned:-0}" \
+        --argjson warnings "${audit_warnings:-0}" \
+        --argjson duplicates "${audit_duplicates:-0}" \
+        --argjson issues "${audit_issues:-0}" \
+        --argjson upcoming "${audit_upcoming:-0}" \
+        '{orphaned: $orphaned, warnings: $warnings, duplicates: $duplicates, issues: $issues, upcoming: $upcoming}')
+fi
+
+# --- Library breakdown (from storage report) ---
+breakdown_json='[]'
+codec_json='[]'
+if [ -f "$REPORT_DIR/storage-report.md" ]; then
+    breakdown_json=$(awk '/^## Resolution Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"resolution\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
+    codec_json=$(awk '/^## Codec Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"codec\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
 fi
 
 # --- Network status ---
@@ -160,6 +207,10 @@ jq -n \
     --argjson net_gateway_ok "$net_gateway_ok" \
     --arg net_internet_ms "${net_internet_ms:-}" \
     --argjson disk_growth "$growth_json" \
+    --argjson plex "$plex_json" \
+    --argjson audit "$audit_json" \
+    --argjson resolution_breakdown "$breakdown_json" \
+    --argjson codec_breakdown "${codec_json:-[]}" \
     '{
         timestamp: $timestamp,
         memory: { total_mb: $mem_total, used_mb: $mem_used, available_mb: $mem_available },
@@ -174,5 +225,9 @@ jq -n \
         last_runs: $last_runs,
         library: $library,
         network: { ip: $net_ip, gateway: $net_gateway, gateway_ok: $net_gateway_ok, internet_ms: $net_internet_ms },
-        disk_growth: $disk_growth
+        disk_growth: $disk_growth,
+        plex: $plex,
+        audit: $audit,
+        resolution_breakdown: $resolution_breakdown,
+        codec_breakdown: $codec_breakdown
     }' > "$OUTPUT"
