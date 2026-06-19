@@ -143,7 +143,10 @@ if cache_stale "$REPORTS_CACHE" 3600; then
         _ad=$(awk -F'|' '/\| Duplicates \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
         _ai=$(awk -F'|' '/\| Issues \(errors\) \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
         _au=$(awk -F'|' '/\| Upcoming/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        _aud_json=$(jq -n --argjson o "${_ao:-0}" --argjson w "${_aw:-0}" --argjson d "${_ad:-0}" --argjson i "${_ai:-0}" --argjson u "${_au:-0}" '{orphaned:$o,warnings:$w,duplicates:$d,issues:$i,upcoming:$u}')
+        _pw=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Warnings/{gsub(/[^0-9]/,"",$3); print $3}')
+        _pi=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Issues/{gsub(/[^0-9]/,"",$3); print $3}')
+        _pd=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Duplicates/{gsub(/[^0-9]/,"",$3); print $3}')
+        _aud_json=$(jq -n --argjson o "${_ao:-0}" --argjson w "${_aw:-0}" --argjson d "${_ad:-0}" --argjson i "${_ai:-0}" --argjson u "${_au:-0}" --argjson pw "${_pw:-0}" --argjson pi "${_pi:-0}" --argjson pd "${_pd:-0}" '{orphaned:$o,warnings:$w,duplicates:$d,issues:$i,upcoming:$u,prev_warnings:$pw,prev_issues:$pi,prev_duplicates:$pd}')
     fi
 
     # Breakdown
@@ -163,7 +166,74 @@ if cache_stale "$REPORTS_CACHE" 3600; then
         [ "$_cod_json" = "[]" ] && _cod_json=$(awk '/^## Codec Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"codec\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
     fi
 
+    # Upcoming + Recently Watched (TMDb posters, cached daily)
+    TMDB_KEY="6d32d887bcfd246d796970654c83b804"
+    _content_hash=$(echo "$(date +%Y-%m-%d)" | md5sum | awk '{print $1}')
+    _cached_hash=""
+    [ -f "$DATA_DIR/content-hash" ] && _cached_hash=$(cat "$DATA_DIR/content-hash")
+
+    if [ "$_content_hash" != "$_cached_hash" ] || [ ! -f "$DATA_DIR/upcoming.cache" ]; then
+        # Helper: get TMDb poster URL for a Plex ratingKey
+        _get_poster() {
+            local rkey="$1" mtype="$2"
+            local tmdb_id poster
+            tmdb_id=$(curl -s --max-time 5 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[0].Guid[]?.id' | grep "tmdb://" | sed 's|tmdb://||')
+            [ -z "$tmdb_id" ] && return
+            poster=$(curl -s --max-time 5 "https://api.themoviedb.org/3/${mtype}/${tmdb_id}?api_key=$TMDB_KEY" 2>/dev/null | jq -r '.poster_path // empty')
+            [ -n "$poster" ] && echo "https://image.tmdb.org/t/p/w200${poster}"
+        }
+
+        # Upcoming Movies
+        _upcoming_json="[]"
+        _mov_col=$(curl -s --max-time 5 "$PLEX_URL/library/sections/4/collections?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | select(.title | contains("Coming Soon")) | .ratingKey')
+        [ -n "$_mov_col" ] && while IFS=$'\t' read -r title year rkey; do
+            [ -z "$rkey" ] && continue
+            p=$(_get_poster "$rkey" "movie")
+            _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title ($year)" --arg p "${p:-}" --arg t "movie" '. + [{name:$n,poster:$p,type:$t}]')
+        done < <(curl -s --max-time 5 "$PLEX_URL/library/collections/$_mov_col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.year)\t\(.ratingKey)"')
+
+        # Upcoming TV
+        _tv_col=$(curl -s --max-time 5 "$PLEX_URL/library/sections/5/collections?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | select(.title | contains("Coming Soon")) | .ratingKey')
+        [ -n "$_tv_col" ] && while IFS=$'\t' read -r title rkey; do
+            [ -z "$rkey" ] && continue
+            p=$(_get_poster "$rkey" "tv")
+            _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "tv" '. + [{name:$n,poster:$p,type:$t}]')
+        done < <(curl -s --max-time 5 "$PLEX_URL/library/collections/$_tv_col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.ratingKey)"')
+        echo "$_upcoming_json" > "$DATA_DIR/upcoming.cache"
+
+        # Recently Watched
+        _recent_json="[]"
+        _seen=""
+        while IFS=$'\t' read -r title type gp_title rkey; do
+            [ -z "$rkey" ] && continue
+            if [ "$type" = "episode" ]; then
+                gp_rkey=$(curl -s --max-time 3 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[0].grandparentRatingKey // empty')
+                [ -z "$gp_rkey" ] && continue
+                echo "$_seen" | grep -q "$gp_rkey" && continue
+                _seen="$_seen $gp_rkey"
+                p=$(_get_poster "$gp_rkey" "tv")
+                _recent_json=$(echo "$_recent_json" | jq --arg n "$gp_title" --arg p "${p:-}" --arg t "tv" '. + [{name:$n,poster:$p,type:$t}]')
+            else
+                p=$(_get_poster "$rkey" "movie")
+                _recent_json=$(echo "$_recent_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "movie" '. + [{name:$n,poster:$p,type:$t}]')
+            fi
+        done < <(curl -s --max-time 5 "$PLEX_URL/status/sessions/history/all?X-Plex-Token=$PLEX_TOKEN&sort=viewedAt:desc&limit=30" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.type)\t\(.grandparentTitle // "")\t\(.ratingKey)"')
+        echo "$_recent_json" > "$DATA_DIR/recent.cache"
+
+        echo "$_content_hash" > "$DATA_DIR/content-hash"
+    fi
+
     # Write shell-sourceable cache
+    # Get total sizes for breakdown headers
+    _tv_size=""
+    _mov_size=""
+    if [ -f "$REPORT_DIR/storage-report.md" ]; then
+        _tv_size=$(awk '/^# TV Shows/,/^# Movies/' "$REPORT_DIR/storage-report.md" | grep "Total size" | awk -F'|' '{gsub(/^ +| +$/,"",$3); print $3}')
+        _mov_size=$(awk '/^# Movies/,0' "$REPORT_DIR/storage-report.md" | grep "Total size" | awk -F'|' '{gsub(/^ +| +$/,"",$3); print $3}')
+        # Fallback for old single-library format
+        [ -z "$_tv_size" ] && _tv_size=$(grep "Total size" "$REPORT_DIR/storage-report.md" | head -1 | awk -F'|' '{gsub(/^ +| +$/,"",$3); print $3}')
+    fi
+
     cat > "$REPORTS_CACHE" <<CACHE
 library_json='$_lib_json'
 audit_json='$_aud_json'
@@ -171,6 +241,8 @@ breakdown_json='$_res_json'
 codec_json='$_cod_json'
 breakdown_movies_json='$_res_movies_json'
 codec_movies_json='$_cod_movies_json'
+tv_total_size='$_tv_size'
+movies_total_size='$_mov_size'
 CACHE
 fi
 
@@ -229,6 +301,10 @@ jq -n \
     --argjson codec_breakdown "${codec_json:-[]}" \
     --argjson resolution_breakdown_movies "${breakdown_movies_json:-[]}" \
     --argjson codec_breakdown_movies "${codec_movies_json:-[]}" \
+    --argjson upcoming "$(cat "$DATA_DIR/upcoming.cache" 2>/dev/null || echo '[]')" \
+    --argjson recent "$(cat "$DATA_DIR/recent.cache" 2>/dev/null || echo '[]')" \
+    --arg tv_total_size "${tv_total_size:-}" \
+    --arg movies_total_size "${movies_total_size:-}" \
     '{
         timestamp: $timestamp,
         memory: { total_mb: $mem_total, used_mb: $mem_used, available_mb: $mem_available },
@@ -249,5 +325,9 @@ jq -n \
         resolution_breakdown: $resolution_breakdown,
         codec_breakdown: $codec_breakdown,
         resolution_breakdown_movies: $resolution_breakdown_movies,
-        codec_breakdown_movies: $codec_breakdown_movies
+        codec_breakdown_movies: $codec_breakdown_movies,
+        upcoming: $upcoming,
+        recent: $recent,
+        tv_total_size: $tv_total_size,
+        movies_total_size: $movies_total_size
     }' > "$OUTPUT.tmp" && mv "$OUTPUT.tmp" "$OUTPUT"
