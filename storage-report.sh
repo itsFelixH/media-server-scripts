@@ -66,7 +66,41 @@ LOG_FILE="$LOG_DIR/storage-report/storage-report_$(date +%Y%m%d_%H%M%S).log"
 REPORT_FILE="$REPORT_DIR/storage-report.md"
 REPORT_PREV="$REPORT_DIR/storage-report.prev.md"
 mkdir -p "$LOG_DIR/storage-report"
-BASE_PATH="${POSITIONAL[0]:-$TV_DIR}"
+BASE_PATH="${POSITIONAL[0]:-}"
+
+# If no directory specified, scan both libraries sequentially
+if [ -z "$BASE_PATH" ]; then
+    echo "No directory specified — scanning both libraries..."
+    SELF_ARGS=""
+    [ "$QUIET" = true ] && SELF_ARGS="$SELF_ARGS --quiet"
+    [ "$NO_DISCORD" = true ] && SELF_ARGS="$SELF_ARGS --no-discord"
+    # Run self for TV Shows
+    bash "$0" $SELF_ARGS "$TV_DIR"
+    [ -f "$REPORT_FILE" ] && mv "$REPORT_FILE" "$REPORT_DIR/storage-report-tv.md"
+    # Run self for Movies
+    bash "$0" $SELF_ARGS "$MOVIES_DIR"
+    [ -f "$REPORT_FILE" ] && mv "$REPORT_FILE" "$REPORT_DIR/storage-report-movies.md"
+    # Combine into one report
+    {
+        echo "# 📊 Storage Report"
+        echo ""
+        echo "**Generated:** $(date '+%Y-%m-%d %H:%M:%S')"
+        echo ""
+        echo "---"
+        echo ""
+        echo "# TV Shows"
+        echo ""
+        sed -n '/^## Summary/,$ p' "$REPORT_DIR/storage-report-tv.md" 2>/dev/null
+        echo ""
+        echo "---"
+        echo ""
+        echo "# Movies"
+        echo ""
+        sed -n '/^## Summary/,$ p' "$REPORT_DIR/storage-report-movies.md" 2>/dev/null
+    } > "$REPORT_FILE"
+    rm -f "$REPORT_DIR/storage-report-tv.md" "$REPORT_DIR/storage-report-movies.md"
+    exit 0
+fi
 
 # Redirect output
 if [ "$QUIET" = true ]; then
