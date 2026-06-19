@@ -2,6 +2,12 @@
 # system-status.sh — Writes system stats to a JSON file for PiBoard
 # Schedule: every 1 minute via crontab
 # Output: ~/docker/piboard/data/system-status.json
+#
+# Caching strategy:
+#   Fast (every run):   memory, cpu temp, uptime, network
+#   Medium (5 min):     root disk, services, containers, last runs, plex
+#   Slow (1 hour):      library stats, audit, resolution/codec breakdown
+#   Daily:              media disk, growth CSV
 
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
@@ -22,29 +28,20 @@ cache_stale() {
 
 # ===== FAST DATA (every run) =====
 
-# Memory (MB)
 read -r mem_total mem_used mem_free mem_available <<< $(free -m | awk '/^Mem:/ {print $2, $3, $4, $7}')
 
-# CPU temperature
-cpu_temp=""
+cpu_temp=0
 for thermal in /sys/class/thermal/thermal_zone*/temp; do
-    if [ -r "$thermal" ]; then
-        cpu_temp=$(( $(cat "$thermal") / 1000 ))
-        break
-    fi
+    [ -r "$thermal" ] && cpu_temp=$(( $(cat "$thermal") / 1000 )) && break
 done
 
-# Uptime
 uptime_str=$(uptime -p | sed 's/^up //')
 
-# Network (ping)
 net_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
 net_gateway=$(ip route show default 2>/dev/null | awk '{print $3; exit}')
 net_gateway_ok="false"
 net_internet_ms=""
-if [ -n "$net_gateway" ]; then
-    ping -c1 -W2 "$net_gateway" >/dev/null 2>&1 && net_gateway_ok="true"
-fi
+[ -n "$net_gateway" ] && ping -c1 -W2 "$net_gateway" >/dev/null 2>&1 && net_gateway_ok="true"
 net_internet_ms=$(ping -c1 -W3 8.8.8.8 2>/dev/null | grep -oP 'time=\K[0-9.]+' || echo "")
 
 # ===== MEDIUM DATA (every 5 minutes) =====
@@ -52,95 +49,77 @@ net_internet_ms=$(ping -c1 -W3 8.8.8.8 2>/dev/null | grep -oP 'time=\K[0-9.]+' |
 SERVICES_CACHE="$DATA_DIR/services.cache"
 
 if cache_stale "$SERVICES_CACHE" 300; then
-    # Disk: root
-    read -r disk_root_total disk_root_used disk_root_free disk_root_pct <<< $(df -BG / | awk 'NR==2 {gsub("G",""); print $2, $3, $4, $5}')
-    disk_root_pct="${disk_root_pct%\%}"
+    # Root disk
+    read -r _drT _drU _drF _drP <<< $(df -BG / | awk 'NR==2 {gsub("G",""); print $2, $3, $4, $5}')
+    _drP="${_drP%\%}"
 
-    # Services (systemd)
-    services_json="[]"
-    all_services=("$PLEX_SERVICE" "${ARR_SERVICES[@]}")
-    for svc in "${all_services[@]}"; do
+    # Services
+    _svc_json="[]"
+    for svc in "$PLEX_SERVICE" "${ARR_SERVICES[@]}"; do
         status=$(systemctl is-active "$svc" 2>/dev/null || echo "unknown")
-        services_json=$(echo "$services_json" | jq --arg name "$svc" --arg status "$status" '. + [{"name": $name, "status": $status}]')
+        _svc_json=$(echo "$_svc_json" | jq --arg n "$svc" --arg s "$status" '. + [{"name":$n,"status":$s}]')
     done
 
-    # Docker containers
-    containers_json="[]"
+    # Containers
+    _ctr_json="[]"
     for ctr in "${DOCKER_CONTAINERS[@]}" piboard; do
         status=$(docker inspect --format='{{.State.Status}}' "$ctr" 2>/dev/null || echo "not found")
         health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$ctr" 2>/dev/null || echo "unknown")
-        containers_json=$(echo "$containers_json" | jq --arg name "$ctr" --arg status "$status" --arg health "$health" '. + [{"name": $name, "status": $status, "health": $health}]')
+        _ctr_json=$(echo "$_ctr_json" | jq --arg n "$ctr" --arg s "$status" --arg h "$health" '. + [{"name":$n,"status":$s,"health":$h}]')
     done
 
-    # Last run times
-    last_runs_json="[]"
-    add_last_run() {
-        local name="$1" ts="$2" duration="${3:-}"
-        last_runs_json=$(echo "$last_runs_json" | jq --arg name "$name" --argjson ts "$ts" --arg duration "$duration" '. + [{"name": $name, "timestamp": $ts, "duration": $duration}]')
+    # Last runs
+    _lr_json="[]"
+    _add_lr() {
+        _lr_json=$(echo "$_lr_json" | jq --arg n "$1" --argjson t "$2" --arg d "${3:-}" '. + [{"name":$n,"timestamp":$t,"duration":$d}]')
+    }
+    [ -f "$KOMETA_CONFIG/logs/meta.log" ] && {
+        _t=$(stat -c '%Y' "$KOMETA_CONFIG/logs/meta.log")
+        _d=$(grep "Run Time:" "$KOMETA_CONFIG/logs/meta.log" | tail -1 | grep -oP 'Run Time: \K[0-9:]+')
+        _add_lr "Kometa" "$_t" "${_d:-}"
+    }
+    _ul=$(ls -t "$UMTK_LOGS_DIR"/UMTK_*.log 2>/dev/null | head -1)
+    [ -n "$_ul" ] && {
+        _t=$(stat -c '%Y' "$_ul")
+        _d=$(grep "Total runtime:" "$_ul" 2>/dev/null | tail -1 | grep -oP 'Total runtime: \K[0-9:]+')
+        _add_lr "UMTK" "$_t" "${_d:-}"
+    }
+    [ -f "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log" ] && {
+        _t=$(stat -c '%Y' "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log")
+        _add_lr "ImageMaid" "$_t"
+    }
+    _pl=$(ls -t "$LOG_DIR/plextraktsync"/plextraktsync_*.log 2>/dev/null | head -1)
+    [ -n "$_pl" ] && {
+        _t=$(stat -c '%Y' "$_pl")
+        _add_lr "PlexTraktSync" "$_t"
     }
 
-    if [ -f "$KOMETA_CONFIG/logs/meta.log" ]; then
-        ts=$(stat -c '%Y' "$KOMETA_CONFIG/logs/meta.log")
-        dur=$(grep "Run Time:" "$KOMETA_CONFIG/logs/meta.log" | tail -1 | grep -oP 'Run Time: \K[0-9:]+')
-        add_last_run "Kometa" "$ts" "${dur:-}"
-    fi
-
-    umtk_latest=$(ls -t "$UMTK_LOGS_DIR"/UMTK_*.log 2>/dev/null | head -1)
-    if [ -n "$umtk_latest" ]; then
-        ts=$(stat -c '%Y' "$umtk_latest")
-        dur=$(grep "Total runtime:" "$umtk_latest" 2>/dev/null | tail -1 | grep -oP 'Total runtime: \K[0-9:]+')
-        add_last_run "UMTK" "$ts" "${dur:-}"
-    fi
-
-    if [ -f "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log" ]; then
-        ts=$(stat -c '%Y' "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log")
-        add_last_run "ImageMaid" "$ts"
-    fi
-
-    pts_latest=$(ls -t "$LOG_DIR/plextraktsync"/plextraktsync_*.log 2>/dev/null | head -1)
-    if [ -n "$pts_latest" ]; then
-        ts=$(stat -c '%Y' "$pts_latest")
-        add_last_run "PlexTraktSync" "$ts"
-    fi
-
-    # Plex server info
+    # Plex API
     PLEX_CACHE="$DATA_DIR/plex-info.cache"
-    plex_json='{}'
+    _plex_json='{}'
     if cache_stale "$PLEX_CACHE" 300; then
-        plex_data=$(curl -s --max-time 5 "$PLEX_URL/?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null)
-        if [ -n "$plex_data" ]; then
-            echo "$plex_data" | jq '{
-                version: .MediaContainer.version,
-                platform: .MediaContainer.platform,
-                platform_version: .MediaContainer.platformVersion,
-                transcoder_active: (.MediaContainer.transcoderActiveVideoSessions // 0)
-            }' > "$PLEX_CACHE" 2>/dev/null
-        fi
+        _pd=$(curl -s --max-time 5 "$PLEX_URL/?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null)
+        [ -n "$_pd" ] && _plex_json=$(echo "$_pd" | jq '{version:.MediaContainer.version,platform:.MediaContainer.platform,platform_version:.MediaContainer.platformVersion,transcoder_active:(.MediaContainer.transcoderActiveVideoSessions // 0)}' 2>/dev/null)
+        [ "$_plex_json" != "null" ] && [ -n "$_plex_json" ] || _plex_json='{}'
+        echo "$_plex_json" > "$PLEX_CACHE"
+    else
+        _plex_json=$(cat "$PLEX_CACHE")
     fi
-    [ -f "$PLEX_CACHE" ] && plex_json=$(cat "$PLEX_CACHE")
 
-    # Write medium cache
-    jq -n \
-        --argjson disk_root_total "${disk_root_total:-0}" \
-        --argjson disk_root_used "${disk_root_used:-0}" \
-        --argjson disk_root_pct "${disk_root_pct:-0}" \
-        --argjson services "$services_json" \
-        --argjson containers "$containers_json" \
-        --argjson last_runs "$last_runs_json" \
-        --argjson plex "$plex_json" \
-        '{disk_root: {total_gb: $disk_root_total, used_gb: $disk_root_used, percent: $disk_root_pct}, services: $services, containers: $containers, last_runs: $last_runs, plex: $plex}' \
-        > "$SERVICES_CACHE"
+    # Write shell-sourceable cache
+    cat > "$SERVICES_CACHE" <<CACHE
+disk_root_total=${_drT:-0}
+disk_root_used=${_drU:-0}
+disk_root_pct=${_drP:-0}
+services_json='$_svc_json'
+containers_json='$_ctr_json'
+last_runs_json='$_lr_json'
+plex_json='$_plex_json'
+CACHE
 fi
 
-# Read medium cache
-medium=$(cat "$SERVICES_CACHE")
-disk_root_total=$(echo "$medium" | jq '.disk_root.total_gb')
-disk_root_used=$(echo "$medium" | jq '.disk_root.used_gb')
-disk_root_pct=$(echo "$medium" | jq '.disk_root.percent')
-services_json=$(echo "$medium" | jq '.services')
-containers_json=$(echo "$medium" | jq '.containers')
-last_runs_json=$(echo "$medium" | jq '.last_runs')
-plex_json=$(echo "$medium" | jq '.plex')
+# Source medium cache (instant — no jq)
+source "$SERVICES_CACHE"
 
 # ===== SLOW DATA (every hour) =====
 
@@ -148,62 +127,50 @@ REPORTS_CACHE="$DATA_DIR/reports.cache"
 
 if cache_stale "$REPORTS_CACHE" 3600; then
     # Library stats
-    library_json='{}'
+    _lib_json='{}'
     if [ -f "$REPORT_DIR/library-catalog.md" ]; then
-        movies=$(grep '| Movies |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
-        shows=$(grep '| TV Shows |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
-        episodes=$(grep '| Episodes |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
-        library_json=$(jq -n --argjson movies "${movies:-0}" --argjson shows "${shows:-0}" --argjson episodes "${episodes:-0}" \
-            '{movies: $movies, shows: $shows, episodes: $episodes}')
+        _m=$(grep '| Movies |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
+        _s=$(grep '| TV Shows |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
+        _e=$(grep '| Episodes |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
+        _lib_json=$(jq -n --argjson m "${_m:-0}" --argjson s "${_s:-0}" --argjson e "${_e:-0}" '{movies:$m,shows:$s,episodes:$e}')
     fi
 
-    # Metadata audit summary
-    audit_json='{}'
+    # Audit
+    _aud_json='{}'
     if [ -f "$REPORT_DIR/metadata-audit.md" ]; then
-        audit_orphaned=$(awk -F'|' '/\| Orphaned \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        audit_warnings=$(awk -F'|' '/\| Warnings \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        audit_duplicates=$(awk -F'|' '/\| Duplicates \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        audit_issues=$(awk -F'|' '/\| Issues \(errors\) \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        audit_upcoming=$(awk -F'|' '/\| Upcoming/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        audit_json=$(jq -n \
-            --argjson orphaned "${audit_orphaned:-0}" \
-            --argjson warnings "${audit_warnings:-0}" \
-            --argjson duplicates "${audit_duplicates:-0}" \
-            --argjson issues "${audit_issues:-0}" \
-            --argjson upcoming "${audit_upcoming:-0}" \
-            '{orphaned: $orphaned, warnings: $warnings, duplicates: $duplicates, issues: $issues, upcoming: $upcoming}')
+        _ao=$(awk -F'|' '/\| Orphaned \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+        _aw=$(awk -F'|' '/\| Warnings \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+        _ad=$(awk -F'|' '/\| Duplicates \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+        _ai=$(awk -F'|' '/\| Issues \(errors\) \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+        _au=$(awk -F'|' '/\| Upcoming/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
+        _aud_json=$(jq -n --argjson o "${_ao:-0}" --argjson w "${_aw:-0}" --argjson d "${_ad:-0}" --argjson i "${_ai:-0}" --argjson u "${_au:-0}" '{orphaned:$o,warnings:$w,duplicates:$d,issues:$i,upcoming:$u}')
     fi
 
-    # Library breakdown
-    breakdown_json='[]'
-    codec_json='[]'
+    # Breakdown
+    _res_json='[]'
+    _cod_json='[]'
     if [ -f "$REPORT_DIR/storage-report.md" ]; then
-        breakdown_json=$(awk '/^## Resolution Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"resolution\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
-        codec_json=$(awk '/^## Codec Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"codec\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
+        _res_json=$(awk '/^## Resolution Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"resolution\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
+        _cod_json=$(awk '/^## Codec Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"codec\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
     fi
 
-    # Write report cache
-    jq -n \
-        --argjson library "$library_json" \
-        --argjson audit "$audit_json" \
-        --argjson resolution_breakdown "$breakdown_json" \
-        --argjson codec_breakdown "${codec_json:-[]}" \
-        '{library: $library, audit: $audit, resolution_breakdown: $resolution_breakdown, codec_breakdown: $codec_breakdown}' \
-        > "$REPORTS_CACHE"
+    # Write shell-sourceable cache
+    cat > "$REPORTS_CACHE" <<CACHE
+library_json='$_lib_json'
+audit_json='$_aud_json'
+breakdown_json='$_res_json'
+codec_json='$_cod_json'
+CACHE
 fi
 
-# Read report cache
-reports=$(cat "$REPORTS_CACHE")
-library_json=$(echo "$reports" | jq '.library')
-audit_json=$(echo "$reports" | jq '.audit')
-breakdown_json=$(echo "$reports" | jq '.resolution_breakdown')
-codec_json=$(echo "$reports" | jq '.codec_breakdown')
+# Source report cache (instant)
+source "$REPORTS_CACHE"
 
 # ===== DAILY DATA =====
 
-# Disk: media (cached daily to avoid waking drive)
+# Media disk
 MEDIA_CACHE="$DATA_DIR/media-disk.cache"
-disk_media_total="0" disk_media_used="0" disk_media_pct="0"
+disk_media_total=0 disk_media_used=0 disk_media_pct=0
 
 if cache_stale "$MEDIA_CACHE" 86400; then
     MEDIA_MOUNT=$(dirname "$MOVIES_DIR")
@@ -211,27 +178,17 @@ if cache_stale "$MEDIA_CACHE" 86400; then
         df -BG "$MEDIA_MOUNT" | awk 'NR==2 {gsub("G",""); print $2, $3, $4, $5}' > "$MEDIA_CACHE"
     fi
 fi
+[ -f "$MEDIA_CACHE" ] && read -r disk_media_total disk_media_used _dmf disk_media_pct < "$MEDIA_CACHE" && disk_media_pct="${disk_media_pct%\%}"
 
-if [ -f "$MEDIA_CACHE" ]; then
-    read -r disk_media_total disk_media_used disk_media_free disk_media_pct < "$MEDIA_CACHE"
-    disk_media_pct="${disk_media_pct%\%}"
-fi
-
-# Disk growth (append once per day)
+# Disk growth
 GROWTH_FILE="$DATA_DIR/disk-growth.csv"
 TODAY=$(date +%Y-%m-%d)
-
-if [ ! -f "$GROWTH_FILE" ]; then
-    echo "date,root_used_gb,media_used_gb" > "$GROWTH_FILE"
-fi
-
-if ! grep -q "^$TODAY," "$GROWTH_FILE" 2>/dev/null; then
-    echo "$TODAY,${disk_root_used:-0},${disk_media_used:-0}" >> "$GROWTH_FILE"
-fi
+[ ! -f "$GROWTH_FILE" ] && echo "date,root_used_gb,media_used_gb" > "$GROWTH_FILE"
+grep -q "^$TODAY," "$GROWTH_FILE" 2>/dev/null || echo "$TODAY,${disk_root_used:-0},${disk_media_used:-0}" >> "$GROWTH_FILE"
 
 growth_json=$(tail -90 "$GROWTH_FILE" | grep -v "^date," | awk -F',' '{printf "{\"date\":\"%s\",\"root\":%s,\"media\":%s}\n", $1, $2, $3}' | jq -s '.')
 
-# ===== WRITE FINAL JSON =====
+# ===== WRITE FINAL JSON (atomic) =====
 
 jq -n \
     --arg timestamp "$(date -Iseconds)" \
@@ -278,4 +235,4 @@ jq -n \
         audit: $audit,
         resolution_breakdown: $resolution_breakdown,
         codec_breakdown: $codec_breakdown
-    }' > "$OUTPUT"
+    }' > "$OUTPUT.tmp" && mv "$OUTPUT.tmp" "$OUTPUT"
