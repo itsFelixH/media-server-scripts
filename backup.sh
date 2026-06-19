@@ -135,6 +135,15 @@ for compose_path in "${COMPOSE_FILES[@]}"; do
     fi
 done
 
+# --- PiBoard site files ---
+PIBOARD_DIR="$HOME/docker/piboard"
+if [ -d "$PIBOARD_DIR/site" ]; then
+    echo "Collecting PiBoard site files..."
+    mkdir -p "$TEMP_DIR/docker/piboard"
+    cp -r "$PIBOARD_DIR/site" "$TEMP_DIR/docker/piboard/" 2>/dev/null
+    cp "$PIBOARD_DIR/nginx.conf" "$TEMP_DIR/docker/piboard/" 2>/dev/null
+fi
+
 # --- Crontab ---
 echo "Collecting crontab..."
 crontab -l > "$TEMP_DIR/crontab.txt" 2>/dev/null
