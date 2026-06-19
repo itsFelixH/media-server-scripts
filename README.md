@@ -57,7 +57,7 @@ bash healthcheck.sh
 | `library-catalog.sh` | Snapshot library contents with diff tracking | Sundays 01:30 |
 | `metadata-audit.sh` | Validate metadata files against library | Sundays 02:00 |
 | `encode-queue.sh` | Find re-encoding candidates | 1st of month |
-| `storage-report.sh` | Disk usage breakdown by folder/codec/resolution | 28th of month |
+| `storage-report.sh` | Disk usage breakdown by folder/codec/resolution (both libraries) | 28th of month |
 | `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
 | `runkometa.sh` | Interactive Kometa runner with library/mode selection | Manual |
 
@@ -257,7 +257,7 @@ Scans for non-HEVC/non-AV1 files and generates a prioritized re-encode list sort
 <details>
 <summary><strong>storage-report.sh</strong> — disk usage by folder, codec, resolution</summary>
 
-Scans a media directory and generates a detailed storage report. Auto-detects TV (show/season) vs Movies (flat) structure. Compares against previous run.
+Scans a media directory and generates a detailed storage report. Auto-detects TV (show/season) vs Movies (flat) structure. Compares against previous run. When no directory is specified, scans both TV Shows and Movies and produces a combined report.
 
 #### Config keys used
 
@@ -266,8 +266,9 @@ Scans a media directory and generates a detailed storage report. Auto-detects TV
 #### Usage
 
 ```bash
-./storage-report.sh                            # TV Shows (default)
-./storage-report.sh "/mnt/Media/Movies"        # Movies
+./storage-report.sh                            # Both libraries (combined report)
+./storage-report.sh "/mnt/Media/Movies"        # Movies only
+./storage-report.sh "/mnt/Media/TV Shows"      # TV Shows only
 ```
 
 #### Dependencies
