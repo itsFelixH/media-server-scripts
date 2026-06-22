@@ -112,6 +112,24 @@ if cache_stale "$SERVICES_CACHE" 300; then
         _t=$(stat -c '%Y' "$_pl")
         _add_lr "PlexTraktSync" "$_t"
     }
+    # Script-based last runs (from log directories)
+    for _sname in healthcheck backup archive-reports maintenance library-catalog metadata-audit encode-queue storage-report media-analyzer; do
+        _sl=$(ls -t "$LOG_DIR/$_sname"/${_sname}_*.log 2>/dev/null | head -1)
+        [ -n "$_sl" ] && {
+            _t=$(stat -c '%Y' "$_sl")
+            # Map directory names to SCHEDULE_DATA names
+            case "$_sname" in
+                healthcheck) _add_lr "Health Check" "$_t" ;;
+                backup) _add_lr "Backup" "$_t" ;;
+                archive-reports) _add_lr "Archive Reports" "$_t" ;;
+                maintenance) _add_lr "Maintenance" "$_t" ;;
+                library-catalog) _add_lr "Library Catalog" "$_t" ;;
+                metadata-audit) _add_lr "Metadata Audit" "$_t" ;;
+                encode-queue) _add_lr "Encode Queue" "$_t" ;;
+                storage-report) _add_lr "Storage Report" "$_t" ;;
+            esac
+        }
+    done
 
     # Plex API info
     _plex_json='{}'
@@ -181,7 +199,8 @@ if cache_stale "$REPORTS_CACHE" 3600; then
         _pw=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Warnings/{gsub(/[^0-9]/,"",$3); print $3}')
         _pi=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Issues/{gsub(/[^0-9]/,"",$3); print $3}')
         _pd=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Duplicates/{gsub(/[^0-9]/,"",$3); print $3}')
-        _aud_json=$(jq -n --argjson o "${_ao:-0}" --argjson w "${_aw:-0}" --argjson d "${_ad:-0}" --argjson i "${_ai:-0}" --argjson u "${_au:-0}" --argjson pw "${_pw:-0}" --argjson pi "${_pi:-0}" --argjson pd "${_pd:-0}" '{orphaned:$o,warnings:$w,duplicates:$d,issues:$i,upcoming:$u,prev_warnings:$pw,prev_issues:$pi,prev_duplicates:$pd}')
+        _aud_ts=$(stat -c '%Y' "$REPORT_DIR/metadata-audit.md")
+        _aud_json=$(jq -n --argjson o "${_ao:-0}" --argjson w "${_aw:-0}" --argjson d "${_ad:-0}" --argjson i "${_ai:-0}" --argjson u "${_au:-0}" --argjson pw "${_pw:-0}" --argjson pi "${_pi:-0}" --argjson pd "${_pd:-0}" --argjson ts "${_aud_ts:-0}" '{orphaned:$o,warnings:$w,duplicates:$d,issues:$i,upcoming:$u,prev_warnings:$pw,prev_issues:$pi,prev_duplicates:$pd,generated:$ts}')
     fi
 
     # Breakdown
@@ -207,6 +226,12 @@ if cache_stale "$REPORTS_CACHE" 3600; then
         [ -z "$_tv_size" ] && _tv_size=$(grep "Total size" "$REPORT_DIR/storage-report.md" | head -1 | awk -F'|' '{gsub(/^ +| +$/,"",$3); print $3}')
     fi
 
+    # Report file timestamps
+    _storage_ts=0
+    [ -f "$REPORT_DIR/storage-report.md" ] && _storage_ts=$(stat -c '%Y' "$REPORT_DIR/storage-report.md")
+    _catalog_ts=0
+    [ -f "$REPORT_DIR/library-catalog.md" ] && _catalog_ts=$(stat -c '%Y' "$REPORT_DIR/library-catalog.md")
+
     # Write JSON caches (safe against single quotes)
     echo "$_lib_json" > "$DATA_DIR/.library.json"
     echo "$_aud_json" > "$DATA_DIR/.audit.json"
@@ -219,6 +244,8 @@ if cache_stale "$REPORTS_CACHE" 3600; then
     cat > "$REPORTS_CACHE" <<CACHE
 tv_total_size=$(printf '%q' "$_tv_size")
 movies_total_size=$(printf '%q' "$_mov_size")
+storage_report_ts=$_storage_ts
+catalog_ts=$_catalog_ts
 CACHE
 fi
 
@@ -385,6 +412,16 @@ growth_json=$(grep -v "^date," "$GROWTH_FILE" | awk -F',' '{printf "{\"date\":\"
 
 # ===== WRITE FINAL JSON (atomic) =====
 
+# Calculate cache ages for frontend "last updated" display
+_age_medium=0
+[ -f "$SERVICES_CACHE" ] && _age_medium=$(( NOW - $(stat -c %Y "$SERVICES_CACHE") ))
+_age_slow=0
+[ -f "$REPORTS_CACHE" ] && _age_slow=$(( NOW - $(stat -c %Y "$REPORTS_CACHE") ))
+_age_genre=0
+[ -f "$DATA_DIR/.genres.json" ] && _age_genre=$(( NOW - $(stat -c %Y "$DATA_DIR/.genres.json") ))
+_age_content=0
+[ -f "$DATA_DIR/.upcoming.json" ] && _age_content=$(( NOW - $(stat -c %Y "$DATA_DIR/.upcoming.json") ))
+
 jq -n \
     --arg timestamp "$(date -Iseconds)" \
     --argjson mem_total "$mem_total" \
@@ -428,6 +465,12 @@ jq -n \
     --arg movies_total_size "${movies_total_size:-}" \
     --argjson genres "$genre_json" \
     --argjson decades "$decade_json" \
+    --argjson age_medium "$_age_medium" \
+    --argjson age_slow "$_age_slow" \
+    --argjson age_genre "$_age_genre" \
+    --argjson age_content "$_age_content" \
+    --argjson storage_report_ts "${storage_report_ts:-0}" \
+    --argjson catalog_ts "${catalog_ts:-0}" \
     '{
         timestamp: $timestamp,
         memory: { total_mb: $mem_total, used_mb: $mem_used, available_mb: $mem_available },
@@ -459,5 +502,8 @@ jq -n \
         tv_total_size: $tv_total_size,
         movies_total_size: $movies_total_size,
         genres: $genres,
-        decades: $decades
+        decades: $decades,
+        cache_ages: { medium_s: $age_medium, slow_s: $age_slow, genre_s: $age_genre, content_s: $age_content },
+        storage_report_ts: $storage_report_ts,
+        catalog_ts: $catalog_ts
     }' > "$OUTPUT.tmp" && mv "$OUTPUT.tmp" "$OUTPUT"
