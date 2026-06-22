@@ -50,7 +50,7 @@ bash healthcheck.sh
 | Script | Purpose | Schedule |
 |--------|---------|----------|
 | `healthcheck.sh` | Monitor services, disk, memory, temperature, APIs | Every 30 min |
-| `system-status.sh` | PiBoard data (system stats, services, last runs, network) | Every 1 min |
+| `piboard-data.sh` | PiBoard data (system stats, services, last runs, network) | Every 1 min |
 | `maintenance.sh` | System updates, Docker updates, log rotation, diagnostics | Mondays 03:00 |
 | `backup.sh` | Archive all configs to media drive | Sundays 01:00 |
 | `archive-reports.sh` | Copy changed reports to archive with date stamps | Daily 05:30 |
