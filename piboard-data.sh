@@ -39,12 +39,22 @@ safe_source() {
 
 read -r mem_total mem_used mem_free mem_available <<< $(free -m | awk '/^Mem:/ {print $2, $3, $4, $7}')
 
+# Swap
+read -r swap_total swap_used swap_free <<< $(free -m | awk '/^Swap:/ {print $2, $3, $4}')
+
+# CPU load averages
+read -r load_1 load_5 load_15 <<< $(awk '{print $1, $2, $3}' /proc/loadavg)
+
 cpu_temp=0
 for thermal in /sys/class/thermal/thermal_zone*/temp; do
     [ -r "$thermal" ] && cpu_temp=$(( $(cat "$thermal") / 1000 )) && break
 done
 
 uptime_str=$(uptime -p | sed 's/^up //')
+uptime_since=$(uptime -s 2>/dev/null || echo "")
+
+# Top processes by memory (top 5)
+top_procs=$(ps aux --sort=-%mem | awk 'NR>1 && NR<=6 {cmd=$11; gsub(/.*\//, "", cmd); printf "{\"name\":\"%s\",\"cpu\":%s,\"mem\":%s,\"mem_mb\":%.0f}\n", cmd, $3, $4, $6/1024}' | jq -s '.' 2>/dev/null || echo '[]')
 
 net_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
 net_gateway=$(ip route show default 2>/dev/null | awk '{print $3; exit}')
@@ -111,11 +121,21 @@ if cache_stale "$SERVICES_CACHE" 300; then
         [ "$_plex_json" = "null" ] || [ -z "$_plex_json" ] && _plex_json='{}'
     fi
 
+    # Kometa run status (errors/warnings from last run in meta.log)
+    _kometa_status='{}'
+    if [ -f "$KOMETA_CONFIG/logs/meta.log" ]; then
+        _k_errors=$(grep -c "\[ERROR\]" "$KOMETA_CONFIG/logs/meta.log" 2>/dev/null) || _k_errors=0
+        _k_warnings=$(grep -c "\[WARNING\]" "$KOMETA_CONFIG/logs/meta.log" 2>/dev/null) || _k_warnings=0
+        _k_collections=$(grep -Ec "Collection .* created|Collection .* updated|Updating Details" "$KOMETA_CONFIG/logs/meta.log" 2>/dev/null) || _k_collections=0
+        _kometa_status=$(jq -n --argjson e "$_k_errors" --argjson w "$_k_warnings" --argjson c "$_k_collections" '{errors:$e,warnings:$w,collections:$c}')
+    fi
+
     # Write JSON cache files (safe against single quotes in data)
     echo "$_svc_json" > "$DATA_DIR/.services-list.json"
     echo "$_ctr_json" > "$DATA_DIR/.containers-list.json"
     echo "$_lr_json" > "$DATA_DIR/.last-runs.json"
     echo "$_plex_json" > "$DATA_DIR/.plex-info.json"
+    echo "$_kometa_status" > "$DATA_DIR/.kometa-status.json"
 
     # Shell-sourceable cache for simple values only
     cat > "$SERVICES_CACHE" <<CACHE
@@ -133,6 +153,8 @@ services_json=$(cat "$DATA_DIR/.services-list.json" 2>/dev/null || echo '[]')
 containers_json=$(cat "$DATA_DIR/.containers-list.json" 2>/dev/null || echo '[]')
 last_runs_json=$(cat "$DATA_DIR/.last-runs.json" 2>/dev/null || echo '[]')
 plex_json=$(cat "$DATA_DIR/.plex-info.json" 2>/dev/null || echo '{}')
+kometa_status_json=$(cat "$DATA_DIR/.kometa-status.json" 2>/dev/null)
+[ -z "$kometa_status_json" ] || ! echo "$kometa_status_json" | jq . >/dev/null 2>&1 && kometa_status_json='{}'
 
 # ===== SLOW DATA (every hour) =====
 
@@ -368,6 +390,12 @@ jq -n \
     --argjson mem_total "$mem_total" \
     --argjson mem_used "$mem_used" \
     --argjson mem_available "${mem_available:-0}" \
+    --argjson swap_total "${swap_total:-0}" \
+    --argjson swap_used "${swap_used:-0}" \
+    --argjson swap_free "${swap_free:-0}" \
+    --arg load_1 "${load_1:-0}" \
+    --arg load_5 "${load_5:-0}" \
+    --arg load_15 "${load_15:-0}" \
     --argjson disk_root_total "${disk_root_total:-0}" \
     --argjson disk_root_used "${disk_root_used:-0}" \
     --argjson disk_root_pct "${disk_root_pct:-0}" \
@@ -376,6 +404,8 @@ jq -n \
     --argjson disk_media_pct "${disk_media_pct:-0}" \
     --argjson cpu_temp "${cpu_temp:-0}" \
     --arg uptime "$uptime_str" \
+    --arg uptime_since "${uptime_since:-}" \
+    --argjson top_procs "${top_procs:-[]}" \
     --argjson services "$services_json" \
     --argjson containers "$containers_json" \
     --argjson last_runs "$last_runs_json" \
@@ -386,6 +416,7 @@ jq -n \
     --arg net_internet_ms "${net_internet_ms:-}" \
     --argjson disk_growth "$growth_json" \
     --argjson plex "$plex_json" \
+    --argjson kometa_status "$kometa_status_json" \
     --argjson audit "$audit_json" \
     --argjson resolution_breakdown "$breakdown_json" \
     --argjson codec_breakdown "${codec_json:-[]}" \
@@ -400,12 +431,16 @@ jq -n \
     '{
         timestamp: $timestamp,
         memory: { total_mb: $mem_total, used_mb: $mem_used, available_mb: $mem_available },
+        swap: { total_mb: $swap_total, used_mb: $swap_used, free_mb: $swap_free },
+        load: { avg_1: $load_1, avg_5: $load_5, avg_15: $load_15 },
         disk: {
             root: { total_gb: $disk_root_total, used_gb: $disk_root_used, percent: $disk_root_pct },
             media: { total_gb: $disk_media_total, used_gb: $disk_media_used, percent: $disk_media_pct }
         },
         cpu_temp_c: $cpu_temp,
         uptime: $uptime,
+        uptime_since: $uptime_since,
+        top_procs: $top_procs,
         services: $services,
         containers: $containers,
         last_runs: $last_runs,
@@ -413,6 +448,7 @@ jq -n \
         network: { ip: $net_ip, gateway: $net_gateway, gateway_ok: $net_gateway_ok, internet_ms: $net_internet_ms },
         disk_growth: $disk_growth,
         plex: $plex,
+        kometa_status: $kometa_status,
         audit: $audit,
         resolution_breakdown: $resolution_breakdown,
         codec_breakdown: $codec_breakdown,
