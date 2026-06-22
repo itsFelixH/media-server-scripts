@@ -166,63 +166,6 @@ if cache_stale "$REPORTS_CACHE" 3600; then
         [ "$_cod_json" = "[]" ] && _cod_json=$(awk '/^## Codec Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"codec\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
     fi
 
-    # Upcoming + Recently Watched (TMDb posters, cached daily)
-    TMDB_KEY="6d32d887bcfd246d796970654c83b804"
-    _content_hash=$(echo "$(date +%Y-%m-%d)" | md5sum | awk '{print $1}')
-    _cached_hash=""
-    [ -f "$DATA_DIR/content-hash" ] && _cached_hash=$(cat "$DATA_DIR/content-hash")
-
-    if [ "$_content_hash" != "$_cached_hash" ] || [ ! -f "$DATA_DIR/upcoming.cache" ]; then
-        # Helper: get TMDb poster URL for a Plex ratingKey
-        _get_poster() {
-            local rkey="$1" mtype="$2"
-            local tmdb_id poster
-            tmdb_id=$(curl -s --max-time 5 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[0].Guid[]?.id' | grep "tmdb://" | sed 's|tmdb://||')
-            [ -z "$tmdb_id" ] && return
-            poster=$(curl -s --max-time 5 "https://api.themoviedb.org/3/${mtype}/${tmdb_id}?api_key=$TMDB_KEY" 2>/dev/null | jq -r '.poster_path // empty')
-            [ -n "$poster" ] && echo "https://image.tmdb.org/t/p/w200${poster}"
-        }
-
-        # Upcoming Movies
-        _upcoming_json="[]"
-        _mov_col=$(curl -s --max-time 5 "$PLEX_URL/library/sections/4/collections?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | select(.title | contains("Coming Soon")) | .ratingKey')
-        [ -n "$_mov_col" ] && while IFS=$'\t' read -r title year rkey; do
-            [ -z "$rkey" ] && continue
-            p=$(_get_poster "$rkey" "movie")
-            _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title ($year)" --arg p "${p:-}" --arg t "movie" '. + [{name:$n,poster:$p,type:$t}]')
-        done < <(curl -s --max-time 5 "$PLEX_URL/library/collections/$_mov_col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.year)\t\(.ratingKey)"')
-
-        # Upcoming TV
-        _tv_col=$(curl -s --max-time 5 "$PLEX_URL/library/sections/5/collections?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | select(.title | contains("Coming Soon")) | .ratingKey')
-        [ -n "$_tv_col" ] && while IFS=$'\t' read -r title rkey; do
-            [ -z "$rkey" ] && continue
-            p=$(_get_poster "$rkey" "tv")
-            _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "tv" '. + [{name:$n,poster:$p,type:$t}]')
-        done < <(curl -s --max-time 5 "$PLEX_URL/library/collections/$_tv_col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.ratingKey)"')
-        echo "$_upcoming_json" > "$DATA_DIR/upcoming.cache"
-
-        # Recently Watched
-        _recent_json="[]"
-        _seen=""
-        while IFS=$'\t' read -r title type gp_title rkey; do
-            [ -z "$rkey" ] && continue
-            if [ "$type" = "episode" ]; then
-                gp_rkey=$(curl -s --max-time 3 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[0].grandparentRatingKey // empty')
-                [ -z "$gp_rkey" ] && continue
-                echo "$_seen" | grep -q "$gp_rkey" && continue
-                _seen="$_seen $gp_rkey"
-                p=$(_get_poster "$gp_rkey" "tv")
-                _recent_json=$(echo "$_recent_json" | jq --arg n "$gp_title" --arg p "${p:-}" --arg t "tv" '. + [{name:$n,poster:$p,type:$t}]')
-            else
-                p=$(_get_poster "$rkey" "movie")
-                _recent_json=$(echo "$_recent_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "movie" '. + [{name:$n,poster:$p,type:$t}]')
-            fi
-        done < <(curl -s --max-time 5 "$PLEX_URL/status/sessions/history/all?X-Plex-Token=$PLEX_TOKEN&sort=viewedAt:desc&limit=30" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.type)\t\(.grandparentTitle // "")\t\(.ratingKey)"')
-        echo "$_recent_json" > "$DATA_DIR/recent.cache"
-
-        echo "$_content_hash" > "$DATA_DIR/content-hash"
-    fi
-
     # Write shell-sourceable cache
     # Get total sizes for breakdown headers
     _tv_size=""
@@ -249,6 +192,76 @@ fi
 # Source report cache (instant)
 source "$REPORTS_CACHE"
 
+# ===== CONTENT DATA (checks Plex once per day, refreshes only if content changed) =====
+
+TMDB_KEY="6d32d887bcfd246d796970654c83b804"
+CONTENT_CHECK="$DATA_DIR/content-check-date"
+_today=$(date +%Y-%m-%d)
+_last_check=""
+[ -f "$CONTENT_CHECK" ] && _last_check=$(cat "$CONTENT_CHECK")
+
+if [ "$_today" != "$_last_check" ] || [ ! -f "$DATA_DIR/upcoming.cache" ]; then
+    # Only query Plex once per day to build the hash
+    _plex_upcoming_ids=$(curl -s --max-time 5 "$PLEX_URL/library/sections/4/collections?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | select(.title | contains("Coming Soon")) | .ratingKey' | while read col; do curl -s --max-time 5 "$PLEX_URL/library/collections/$col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[].ratingKey'; done)
+    _plex_tv_upcoming_ids=$(curl -s --max-time 5 "$PLEX_URL/library/sections/5/collections?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | select(.title | contains("Coming Soon")) | .ratingKey' | while read col; do curl -s --max-time 5 "$PLEX_URL/library/collections/$col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[].ratingKey'; done)
+    _plex_recent_ids=$(curl -s --max-time 5 "$PLEX_URL/status/sessions/history/all?X-Plex-Token=$PLEX_TOKEN&sort=viewedAt:desc&limit=30" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[].ratingKey')
+    _content_hash=$(echo "$_plex_upcoming_ids $_plex_tv_upcoming_ids $_plex_recent_ids" | md5sum | awk '{print $1}')
+    _cached_hash=""
+    [ -f "$DATA_DIR/content-hash" ] && _cached_hash=$(cat "$DATA_DIR/content-hash")
+
+    echo "$_today" > "$CONTENT_CHECK"
+
+    if [ "$_content_hash" != "$_cached_hash" ]; then
+        _get_poster() {
+        local rkey="$1" mtype="$2"
+        local tmdb_id poster
+        tmdb_id=$(curl -s --max-time 5 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[0].Guid[]?.id' | grep "tmdb://" | sed 's|tmdb://||')
+        [ -z "$tmdb_id" ] && return
+        poster=$(curl -s --max-time 5 "https://api.themoviedb.org/3/${mtype}/${tmdb_id}?api_key=$TMDB_KEY" 2>/dev/null | jq -r '.poster_path // empty')
+        [ -n "$poster" ] && echo "https://image.tmdb.org/t/p/w200${poster}"
+    }
+
+    # Upcoming Movies
+    _upcoming_json="[]"
+    _mov_col=$(curl -s --max-time 5 "$PLEX_URL/library/sections/4/collections?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | select(.title | contains("Coming Soon")) | .ratingKey')
+    [ -n "$_mov_col" ] && while IFS=$'\t' read -r title year rkey date; do
+        [ -z "$rkey" ] && continue
+        p=$(_get_poster "$rkey" "movie")
+        _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title ($year)" --arg p "${p:-}" --arg t "movie" --arg d "${date:-}" '. + [{name:$n,poster:$p,type:$t,date:$d}]')
+    done < <(curl -s --max-time 5 "$PLEX_URL/library/collections/$_mov_col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.year)\t\(.ratingKey)\t\(.originallyAvailableAt // "")"')
+
+    # Upcoming TV
+    _tv_col=$(curl -s --max-time 5 "$PLEX_URL/library/sections/5/collections?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | select(.title | contains("Coming Soon")) | .ratingKey')
+    [ -n "$_tv_col" ] && while IFS=$'\t' read -r title rkey date; do
+        [ -z "$rkey" ] && continue
+        p=$(_get_poster "$rkey" "tv")
+        _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "tv" --arg d "${date:-}" '. + [{name:$n,poster:$p,type:$t,date:$d}]')
+    done < <(curl -s --max-time 5 "$PLEX_URL/library/collections/$_tv_col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.ratingKey)\t\(.originallyAvailableAt // "")"')
+    echo "$_upcoming_json" > "$DATA_DIR/upcoming.cache"
+
+    # Recently Watched
+    _recent_json="[]"
+    _seen=""
+    while IFS='§' read -r title type gp_title rkey; do
+        [ -z "$rkey" ] && continue
+        if [ "$type" = "episode" ]; then
+            gp_rkey=$(curl -s --max-time 5 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[0].grandparentRatingKey // empty')
+            [ -z "$gp_rkey" ] && continue
+            echo "$_seen" | grep -q "$gp_rkey" && continue
+            _seen="$_seen $gp_rkey"
+            p=$(_get_poster "$gp_rkey" "tv")
+            _recent_json=$(echo "$_recent_json" | jq --arg n "$gp_title" --arg p "${p:-}" --arg t "tv" '. + [{name:$n,poster:$p,type:$t}]')
+        else
+            p=$(_get_poster "$rkey" "movie")
+            _recent_json=$(echo "$_recent_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "movie" '. + [{name:$n,poster:$p,type:$t}]')
+        fi
+    done < <(curl -s --max-time 5 "$PLEX_URL/status/sessions/history/all?X-Plex-Token=$PLEX_TOKEN&sort=viewedAt:desc&limit=30&accountID=1" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)§\(.type)§\(.grandparentTitle // "NONE")§\(.ratingKey)"')
+    echo "$_recent_json" > "$DATA_DIR/recent.cache"
+
+    echo "$_content_hash" > "$DATA_DIR/content-hash"
+fi
+fi
+
 # ===== DAILY DATA =====
 
 # Media disk
@@ -263,13 +276,23 @@ if cache_stale "$MEDIA_CACHE" 86400; then
 fi
 [ -f "$MEDIA_CACHE" ] && read -r disk_media_total disk_media_used _dmf disk_media_pct < "$MEDIA_CACHE" && disk_media_pct="${disk_media_pct%\%}"
 
-# Disk growth
+# Disk growth (Movies + TV sizes from storage report)
 GROWTH_FILE="$DATA_DIR/disk-growth.csv"
 TODAY=$(date +%Y-%m-%d)
-[ ! -f "$GROWTH_FILE" ] && echo "date,root_used_gb,media_used_gb" > "$GROWTH_FILE"
-grep -q "^$TODAY," "$GROWTH_FILE" 2>/dev/null || echo "$TODAY,${disk_root_used:-0},${disk_media_used:-0}" >> "$GROWTH_FILE"
+[ ! -f "$GROWTH_FILE" ] && echo "date,movies_gb,tv_gb" > "$GROWTH_FILE"
 
-growth_json=$(tail -90 "$GROWTH_FILE" | grep -v "^date," | awk -F',' '{printf "{\"date\":\"%s\",\"root\":%s,\"media\":%s}\n", $1, $2, $3}' | jq -s '.')
+if ! grep -q "^$TODAY," "$GROWTH_FILE" 2>/dev/null; then
+    _movies_gb=0 _tv_gb=0
+    if [ -n "$tv_total_size" ]; then
+        echo "$tv_total_size" | grep -q "TB" && _tv_gb=$(echo "$tv_total_size" | grep -oP '[0-9.]+' | awk '{printf "%.0f", $1 * 1024}') || _tv_gb=$(echo "$tv_total_size" | grep -oP '[0-9.]+' | awk '{printf "%.0f", $1}')
+    fi
+    if [ -n "$movies_total_size" ]; then
+        echo "$movies_total_size" | grep -q "TB" && _movies_gb=$(echo "$movies_total_size" | grep -oP '[0-9.]+' | awk '{printf "%.0f", $1 * 1024}') || _movies_gb=$(echo "$movies_total_size" | grep -oP '[0-9.]+' | awk '{printf "%.0f", $1}')
+    fi
+    [ "$_movies_gb" -gt 0 ] || [ "$_tv_gb" -gt 0 ] && echo "$TODAY,$_movies_gb,$_tv_gb" >> "$GROWTH_FILE"
+fi
+
+growth_json=$(grep -v "^date," "$GROWTH_FILE" | awk -F',' '{printf "{\"date\":\"%s\",\"movies\":%s,\"tv\":%s}\n", $1, $2, $3}' | jq -s '.')
 
 # ===== WRITE FINAL JSON (atomic) =====
 
