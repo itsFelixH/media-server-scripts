@@ -381,6 +381,155 @@ fi
 
 # ===== DAILY DATA =====
 
+# Healthcheck aggregation (every 5 min — produces a single JSON for the frontend)
+HC_AGG_CACHE="$DATA_DIR/.healthcheck-agg.cache"
+if cache_stale "$HC_AGG_CACHE" 300; then
+    _hc_json='[]'
+    _hc_dir="$LOG_DIR/healthcheck"
+    if [ -d "$_hc_dir" ]; then
+        _hc_files=$(ls -r "$_hc_dir"/healthcheck_*.log 2>/dev/null | head -30)
+        for _hcf in $_hc_files; do
+            _fname=$(basename "$_hcf")
+            _entries=$(awk '/^\[/{
+                t=substr($0,2,16)
+                s=index($0,"] ")>0 ? substr($0,index($0,"] ")+2) : ""
+                if(s~/^OK/) printf "{\"time\":\"%s\",\"status\":\"ok\",\"detail\":null},", t
+                else if(s~/^FAIL/) { gsub(/^FAIL[^:]*: /,"",s); gsub(/"/,"\\\"",s); printf "{\"time\":\"%s\",\"status\":\"fail\",\"detail\":\"%s\"},", t, s }
+            }' "$_hcf" | sed 's/,$//')
+            _hc_json=$(echo "$_hc_json" | jq --arg f "$_fname" --argjson e "[${_entries}]" '. + [{filename:$f,entries:$e}]')
+        done
+    fi
+    echo "$_hc_json" > "$DATA_DIR/healthcheck-summary.json"
+    touch "$HC_AGG_CACHE"
+fi
+
+# Schedule JSON (every 5 min — parsed from actual crontab + docker compose env vars)
+SCHED_CACHE="$DATA_DIR/.schedule.cache"
+if cache_stale "$SCHED_CACHE" 300; then
+    _sched_json='[]'
+
+    _add_sched() {
+        local name="$1" label="$2" hour="$3" min="$4" interval="$5" days="$6" cat="$7" desc="$8"
+        _sched_json=$(echo "$_sched_json" | jq \
+            --arg name "$name" \
+            --arg label "$label" \
+            --argjson hour "$hour" \
+            --argjson min "$min" \
+            --argjson interval "$interval" \
+            --arg days "$days" \
+            --arg cat "$cat" \
+            --arg desc "$desc" \
+            '. + [{name:$name,label:$label,hour:$hour,min:$min,interval:$interval,days:$days,cat:$cat,desc:$desc}]')
+    }
+
+    # --- Parse crontab entries ---
+    # Map script filenames to display names, categories, and descriptions
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^#|^$ ]] && continue
+        [[ "$line" =~ ^MAILTO|^PATH ]] && continue
+
+        # Extract cron fields
+        read -r _min _hour _dom _mon _dow _rest <<< "$line"
+
+        # Determine task name from command
+        _task_name="" _cat="script" _desc=""
+        case "$_rest" in
+            *healthcheck.sh*)    _task_name="Health Check"; _cat="monitoring" ;;
+            *plextraktsync*)     _task_name="Plex Trakt Sync"; _cat="sync" ;;
+            *backup.sh*)         _task_name="Backup"; _desc="Backs up all configs to /mnt/Media/backups/" ;;
+            *maintenance.sh*)    _task_name="Maintenance"; _desc="System updates, Docker updates, config validation, log rotation" ;;
+            *library-catalog.sh*) _task_name="Library Catalog"; _desc="Snapshots library content, diffs against previous run" ;;
+            *metadata-audit.sh*) _task_name="Metadata Audit"; _desc="Validates metadata files against library" ;;
+            *encode-queue.sh*)   _task_name="Encode Queue"; _desc="Generates prioritized re-encode list from both libraries" ;;
+            *storage-report.sh*) _task_name="Storage Report"; _desc="Storage usage report with resolution/codec breakdown" ;;
+            *archive-reports.sh*) _task_name="Archive Reports"; _desc="Archives changed reports to /mnt/Media/reports/" ;;
+            *piboard-data.sh*)   continue ;; # Skip self — runs every minute, not interesting
+            *)                   continue ;; # Skip unrecognized entries
+        esac
+        [ -z "$_task_name" ] && continue
+
+        # Determine schedule type and build label
+        _s_hour="null" _s_min=0 _s_interval=0 _s_days="daily" _s_label=""
+
+        if [[ "$_min" == "*/"* ]]; then
+            # Interval: */30 * * * * → every 30 min
+            _s_interval="${_min#*/}"
+            _s_label="Every ${_s_interval} min"
+        elif [[ "$_hour" == "*/"* ]]; then
+            # Interval: 0 */2 * * * → every 2h
+            _s_interval=$(( ${_hour#*/} * 60 ))
+            _s_label="Every ${_hour#*/}h"
+        else
+            # Fixed time
+            _s_min="$_min"
+            _s_hour="$_hour"
+            _time_str=$(printf "%02d:%02d" "$_hour" "$_min")
+
+            if [ "$_dow" != "*" ]; then
+                # Day of week (0=Sun, 1=Mon, etc)
+                case "$_dow" in
+                    0) _s_days="sun"; _s_label="Sun $_time_str" ;;
+                    1) _s_days="mon"; _s_label="Mon $_time_str" ;;
+                    2) _s_days="tue"; _s_label="Tue $_time_str" ;;
+                    3) _s_days="wed"; _s_label="Wed $_time_str" ;;
+                    4) _s_days="thu"; _s_label="Thu $_time_str" ;;
+                    5) _s_days="fri"; _s_label="Fri $_time_str" ;;
+                    6) _s_days="sat"; _s_label="Sat $_time_str" ;;
+                    *) _s_days="daily"; _s_label="$_time_str" ;;
+                esac
+            elif [ "$_dom" != "*" ]; then
+                # Day of month
+                case "$_dom" in
+                    1)  _s_days="1st"; _s_label="1st $_time_str" ;;
+                    28) _s_days="28th"; _s_label="28th $_time_str" ;;
+                    *)  _s_days="${_dom}th"; _s_label="${_dom}th $_time_str" ;;
+                esac
+            else
+                _s_days="daily"
+                _s_label="$_time_str"
+            fi
+        fi
+
+        _add_sched "$_task_name" "$_s_label" "$_s_hour" "$_s_min" "$_s_interval" "$_s_days" "$_cat" "$_desc"
+    done < <(crontab -l 2>/dev/null)
+
+    # --- Docker container schedules (from compose env vars) ---
+
+    # Kometa: KOMETA_TIMES env var
+    _kometa_time=$(grep -oP 'KOMETA_TIMES=\K[0-9:]+' "$HOME/docker/kometa/docker-compose.yml" 2>/dev/null)
+    if [ -n "$_kometa_time" ]; then
+        _kh="${_kometa_time%%:*}"; _km="${_kometa_time##*:}"
+        _add_sched "Kometa" "$_kometa_time" "$_kh" "$_km" 0 "daily" "docker" "Applies overlays, collections, and metadata to Plex"
+    fi
+
+    # UMTK: CRON env var (standard cron format)
+    _umtk_cron=$(grep -oP 'CRON=\K[0-9* /]+' "$HOME/docker/umtk/docker-compose.yml" 2>/dev/null)
+    if [ -n "$_umtk_cron" ]; then
+        read -r _um _uh _rest <<< "$_umtk_cron"
+        _add_sched "UMTK" "$(printf '%02d:%02d' "$_uh" "$_um")" "$_uh" "$_um" 0 "daily" "docker" "Generates overlays & placeholders from Radarr/Sonarr"
+    fi
+
+    # ImageMaid: SCHEDULE in .env (format: HH:MM|weekly(day))
+    _im_sched=$(grep -oP 'SCHEDULE=\K.+' "$IMAGEMAID_CONFIG_DIR/.env" 2>/dev/null)
+    if [ -n "$_im_sched" ]; then
+        _im_time="${_im_sched%%|*}"
+        _im_freq="${_im_sched##*|}"
+        _im_h="${_im_time%%:*}"; _im_m="${_im_time##*:}"
+        _im_day="daily"; _im_label="$_im_time"
+        case "$_im_freq" in
+            *sunday*)    _im_day="sun"; _im_label="Sun $_im_time" ;;
+            *monday*)    _im_day="mon"; _im_label="Mon $_im_time" ;;
+            *saturday*)  _im_day="sat"; _im_label="Sat $_im_time" ;;
+            *daily*)     _im_day="daily"; _im_label="$_im_time" ;;
+        esac
+        _add_sched "ImageMaid" "$_im_label" "$_im_h" "$_im_m" 0 "$_im_day" "docker" "Removes bloated images, cleans PhotoTranscoder, optimizes DB"
+    fi
+
+    echo "$_sched_json" > "$DATA_DIR/schedule.json"
+    touch "$SCHED_CACHE"
+fi
+
 # Media disk
 MEDIA_CACHE="$DATA_DIR/.media-disk.cache"
 disk_media_total=0 disk_media_used=0 disk_media_pct=0
