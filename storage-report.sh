@@ -93,15 +93,19 @@ if [ -z "$BASE_PATH" ]; then
             end;
         ($tv[0].data.libraries[0]) as $t |
         ($movies[0].data.libraries[0]) as $m |
-        ($tv[0].summary.total_size_bytes + $movies[0].summary.total_size_bytes) as $total_bytes |
+        ($t.summary.size_bytes + $m.summary.size_bytes) as $total_bytes |
         ($tv[0].summary.total_files + $movies[0].summary.total_files) as $total_files |
         ($tv[0].summary.folders_scanned + $movies[0].summary.folders_scanned) as $total_folders |
         ($tv[0].duration_seconds + $movies[0].duration_seconds) as $total_duration |
+        ($t.summary.size_bytes / $total_bytes * 1000 | floor / 10) as $tv_pct |
+        ($m.summary.size_bytes / $total_bytes * 1000 | floor / 10) as $mov_pct |
         {
             version: 1,
             type: "storage-report",
             generated: (now | strftime("%Y-%m-%dT%H:%M:%S+02:00")),
+            generated_by: "storage-report.sh",
             duration_seconds: $total_duration,
+            health: {status: "ok", message: "Scan completed successfully"},
             summary: {
                 total_size_bytes: $total_bytes,
                 total_size: ($total_bytes | format_bytes),
@@ -109,7 +113,10 @@ if [ -z "$BASE_PATH" ]; then
                 folders_scanned: $total_folders
             },
             data: {
-                libraries: [$t, $m]
+                libraries: [
+                    ($t + {pct_of_total: $tv_pct}),
+                    ($m + {pct_of_total: $mov_pct})
+                ]
             },
             comparison: null
         }' > "$REPORT_FILE"
