@@ -510,6 +510,7 @@ jq -n \
     --argjson version 1 \
     --arg type "storage-report" \
     --arg generated "$(date -Iseconds)" \
+    --arg generated_by "$SCRIPT_NAME" \
     --argjson duration "$DURATION" \
     --arg directory "$(basename "$BASE_PATH")" \
     --arg mode "$SCAN_MODE" \
@@ -526,7 +527,9 @@ jq -n \
         version: $version,
         type: $type,
         generated: $generated,
+        generated_by: $generated_by,
         duration_seconds: $duration,
+        health: {status: "ok", message: "Scan completed successfully"},
         summary: {
             total_size_bytes: $total_size_bytes,
             total_size: $total_size,
@@ -537,6 +540,12 @@ jq -n \
             libraries: [{
                 directory: $directory,
                 mode: $mode,
+                summary: {
+                    size_bytes: $total_size_bytes,
+                    size: $total_size,
+                    files: $total_files,
+                    folders: $folders_scanned
+                },
                 breakdowns: {
                     resolution: $resolution,
                     codec: $codec
