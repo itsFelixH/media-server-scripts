@@ -234,6 +234,23 @@ QUEUE_COUNT=$(echo "$QUEUE" | grep -c . 2>/dev/null || echo 0)
 TOTAL_NON_HEVC_BYTES=$(awk -F'\t' '{sum += $2} END {printf "%.0f", sum+0}' "$TMP_FILE" 2>/dev/null)
 ESTIMATED_SAVINGS=$(awk -F'\t' -v ratio="$HEVC_RATIO" '{sum += $2} END {printf "%.0f", sum * (100 - ratio) / 100}' "$TMP_FILE" 2>/dev/null)
 
+# Savings by codec breakdown
+SAVINGS_BY_CODEC_JSON=$(awk -F'\t' -v ratio="$HEVC_RATIO" '{
+    codec[$3] += $2
+} END {
+    for (c in codec) {
+        savings = codec[c] * (100 - ratio) / 100
+        printf "%s\t%.0f\t%.0f\n", c, codec[c], savings
+    }
+}' "$TMP_FILE" | sort -t$'\t' -k2 -rn | jq -R -s '
+    split("\n") | map(select(length > 0)) | map(
+        split("\t") | {
+            codec: .[0],
+            size_bytes: (.[1] | tonumber),
+            savings_bytes: (.[2] | tonumber)
+        }
+    )')
+
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
@@ -266,7 +283,7 @@ DIR_NAMES="${DIR_NAMES%, }"
 
 # Generate JSON Report
 
-# Build queue items JSON
+# Build queue items JSON (with batch grouping by parent folder)
 QUEUE_JSON=$(echo "$QUEUE" | jq -R -s '
     split("\n") | map(select(length > 0)) | map(
         split("\t") | {
@@ -274,9 +291,20 @@ QUEUE_JSON=$(echo "$QUEUE" | jq -R -s '
             size_bytes: (.[1] | tonumber),
             codec: .[2],
             resolution: .[3],
-            hdr: (.[4] == "true")
+            hdr: (.[4] == "true"),
+            group: (.[0] | split("/")[0])
         }
     )')
+
+# Build batch groups (grouped by parent folder with totals)
+BATCH_GROUPS_JSON=$(echo "$QUEUE_JSON" | jq '
+    group_by(.group) | map({
+        name: .[0].group,
+        files: length,
+        total_size_bytes: (map(.size_bytes) | add),
+        items: .
+    }) | sort_by(-.total_size_bytes)
+')
 
 # Determine health status
 if [ "$NON_HEVC_COUNT" -gt 10 ]; then
@@ -309,6 +337,8 @@ fi
         --argjson min_size_gb "$MIN_SIZE_GB" \
         --argjson queue_count "$QUEUE_COUNT" \
         --argjson queue "$QUEUE_JSON" \
+        --argjson savings_by_codec "$SAVINGS_BY_CODEC_JSON" \
+        --argjson batch_groups "$BATCH_GROUPS_JSON" \
         '{
             version: $version,
             type: $type,
@@ -322,11 +352,13 @@ fi
                 non_hevc_count: $non_hevc_count,
                 total_size_bytes: $total_size_bytes,
                 estimated_savings_bytes: $estimated_savings,
+                savings_by_codec: $savings_by_codec,
                 hevc_ratio: $hevc_ratio,
                 min_size_gb: $min_size_gb
             },
             data: {
-                queue: $queue
+                queue: $queue,
+                batch_groups: $batch_groups
             }
         }'
 } > "$REPORT_FILE"
