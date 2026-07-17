@@ -50,8 +50,8 @@ source "$SCRIPTS_DIR/config.sh"
 
 TIMESTAMP=$(date +%Y-%m-%d)
 LOG_FILE="$LOG_DIR/metadata-audit/metadata-audit_${TIMESTAMP}.log"
-REPORT_FILE="$REPORT_DIR/metadata-audit.md"
-REPORT_PREV="$REPORT_DIR/metadata-audit.prev.md"
+REPORT_FILE="$REPORT_DIR/metadata-audit.json"
+REPORT_PREV="$REPORT_DIR/metadata-audit.prev.json"
 mkdir -p "$LOG_DIR/metadata-audit"
 
 # Log function - writes to both terminal and log file
@@ -458,193 +458,144 @@ if [ -f "$REPORT_FILE" ]; then
     cp "$REPORT_FILE" "$REPORT_PREV"
 fi
 
-# --- 9. Generate Markdown Report with Comparison ---
-{
-    echo "# 🔍 Metadata Audit Report"
-    echo ""
-    echo "**Generated:** $(date '+%Y-%m-%d %H:%M:%S')"
-    echo ""
-    echo "---"
-    echo ""
-    echo "## Summary"
-    echo ""
-    echo "| Metric | Count |"
-    echo "|--------|-------|"
-    echo "| Duration | ${DURATION}s |"
-    echo "| Movies on disk | ${#LIBRARY_MOVIE_IDS[@]} |"
-    echo "| TV shows on disk | ${#LIBRARY_TV_NAMES[@]} |"
-    echo "| Movie metadata entries | ${#MOVIE_META_IDS[@]} |"
-    echo "| TV metadata entries | ${#TV_META_IDS[@]} |"
-    echo "| Issues (errors) | $ISSUE_COUNT |"
-    echo "| Warnings | $WARNING_COUNT |"
-    echo "| Orphaned | $((ORPHANED_MOVIES + ORPHANED_TV)) |"
-    echo "| Upcoming (not in library yet) | $UPCOMING_MOVIES |"
-    echo "| Duplicates | $((DUPE_MOVIE_COUNT + DUPE_TV_COUNT)) |"
-    echo ""
+# --- 9. Generate JSON Report with Comparison ---
 
-    if [ "$ISSUE_COUNT" -eq 0 ] && [ "$WARNING_COUNT" -eq 0 ]; then
-        echo "---"
-        echo ""
-        echo "## Result ✅"
-        echo ""
-        echo "All metadata valid. No issues found."
-        echo ""
-    fi
+# Build categorized warning arrays
+ORPHANED_MOVIES_JSON="[]"
+ORPHANED_TV_JSON="[]"
+UPCOMING_MOVIES_JSON="[]"
+MISSING_MOVIES_JSON="[]"
+MISSING_TV_JSON="[]"
+SEASON_ISSUES_JSON="[]"
 
-    if [ "$ISSUE_COUNT" -gt 0 ]; then
-        echo "---"
-        echo ""
-        echo "## Issues ❌"
-        echo ""
-        echo "| # | Issue |"
-        echo "|---|-------|"
-        IDX=0
-        for issue in "${ISSUES[@]}"; do
-            IDX=$((IDX + 1))
-            echo "| $IDX | $issue |"
-        done
-        echo ""
-    fi
+for warning in "${WARNINGS[@]}"; do
+    case "$warning" in
+        "Orphaned movie metadata:"*)
+            entry="${warning#Orphaned movie metadata: }"
+            ORPHANED_MOVIES_JSON=$(echo "$ORPHANED_MOVIES_JSON" | jq --arg e "$entry" '. + [$e]')
+            ;;
+        "Orphaned TV metadata:"*)
+            entry="${warning#Orphaned TV metadata: }"
+            ORPHANED_TV_JSON=$(echo "$ORPHANED_TV_JSON" | jq --arg e "$entry" '. + [$e]')
+            ;;
+        "Upcoming movie metadata:"*)
+            entry="${warning#Upcoming movie metadata: }"
+            UPCOMING_MOVIES_JSON=$(echo "$UPCOMING_MOVIES_JSON" | jq --arg e "$entry" '. + [$e]')
+            ;;
+        "Missing movie metadata:"*)
+            entry="${warning#Missing movie metadata: }"
+            MISSING_MOVIES_JSON=$(echo "$MISSING_MOVIES_JSON" | jq --arg e "$entry" '. + [$e]')
+            ;;
+        "Missing TV metadata:"*)
+            entry="${warning#Missing TV metadata: }"
+            MISSING_TV_JSON=$(echo "$MISSING_TV_JSON" | jq --arg e "$entry" '. + [$e]')
+            ;;
+        *"eps on disk"*|*"season folder missing"*|*"missing episodes"*)
+            SEASON_ISSUES_JSON=$(echo "$SEASON_ISSUES_JSON" | jq --arg e "$warning" '. + [$e]')
+            ;;
+    esac
+done
 
-    if [ "$ORPHANED_MOVIES" -gt 0 ] || [ "$ORPHANED_TV" -gt 0 ]; then
-        echo "---"
-        echo ""
-        echo "## Orphaned Metadata"
-        echo ""
-        echo "Entries in metadata files that don't match anything in the library."
-        echo ""
-        if [ "$ORPHANED_MOVIES" -gt 0 ]; then
-            echo "### Movies ($ORPHANED_MOVIES)"
-            echo ""
-            for warning in "${WARNINGS[@]}"; do
-                [[ "$warning" == "Orphaned movie metadata:"* ]] && echo "- ${warning#Orphaned movie metadata: }"
-            done
-            echo ""
-        fi
-        if [ "$ORPHANED_TV" -gt 0 ]; then
-            echo "### TV Shows ($ORPHANED_TV)"
-            echo ""
-            for warning in "${WARNINGS[@]}"; do
-                [[ "$warning" == "Orphaned TV metadata:"* ]] && echo "- ${warning#Orphaned TV metadata: }"
-            done
-            echo ""
-        fi
-    fi
+# Build issues JSON
+ISSUES_JSON=$(printf '%s\n' "${ISSUES[@]}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
+[ -z "$ISSUES_JSON" ] && ISSUES_JSON="[]"
 
-    if [ "$UPCOMING_MOVIES" -gt 0 ]; then
-        echo "---"
-        echo ""
-        echo "## Upcoming (Not Yet in Library)"
-        echo ""
-        echo "Metadata for movies releasing in $CURRENT_YEAR or later. These are expected to be orphaned until added."
-        echo ""
-        for warning in "${WARNINGS[@]}"; do
-            [[ "$warning" == "Upcoming movie metadata:"* ]] && echo "- ${warning#Upcoming movie metadata: }"
-        done
-        echo ""
-    fi
+# Add season issues to the array
+for issue in "${ISSUES[@]}"; do
+    case "$issue" in
+        *"season folder missing"*|*"missing episodes"*)
+            SEASON_ISSUES_JSON=$(echo "$SEASON_ISSUES_JSON" | jq --arg e "$issue" '. + [$e]')
+            ;;
+    esac
+done
 
-    if [ "$MISSING_MOVIES" -gt 0 ] || [ "$MISSING_TV" -gt 0 ]; then
-        echo "---"
-        echo ""
-        echo "## Missing Metadata"
-        echo ""
-        echo "Library items without corresponding metadata entries."
-        echo ""
-        if [ "$MISSING_MOVIES" -gt 0 ]; then
-            echo "### Movies ($MISSING_MOVIES)"
-            echo ""
-            for warning in "${WARNINGS[@]}"; do
-                [[ "$warning" == "Missing movie metadata:"* ]] && echo "- ${warning#Missing movie metadata: }"
-            done
-            echo ""
-        fi
-        if [ "$MISSING_TV" -gt 0 ]; then
-            echo "### TV Shows ($MISSING_TV)"
-            echo ""
-            for warning in "${WARNINGS[@]}"; do
-                [[ "$warning" == "Missing TV metadata:"* ]] && echo "- ${warning#Missing TV metadata: }"
-            done
-            echo ""
-        fi
-    fi
+# Build comparison JSON
+COMPARISON_JSON="null"
+if [ -f "$REPORT_PREV" ]; then
+    PREV_ISSUES=$(jq -r '.summary.issues // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
+    PREV_WARNINGS=$(jq -r '.summary.warnings // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
+    PREV_DUPLICATES=$(jq -r '.summary.duplicates // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
 
-    if [ "$DUPE_MOVIE_COUNT" -gt 0 ] || [ "$DUPE_TV_COUNT" -gt 0 ]; then
-        echo "---"
-        echo ""
-        echo "## Duplicates"
-        echo ""
-        for issue in "${ISSUES[@]}"; do
-            [[ "$issue" == "Duplicate"* ]] && echo "- $issue"
-        done
-        echo ""
-    fi
+    [ -z "$PREV_ISSUES" ] || [ "$PREV_ISSUES" = "null" ] && PREV_ISSUES=0
+    [ -z "$PREV_WARNINGS" ] || [ "$PREV_WARNINGS" = "null" ] && PREV_WARNINGS=0
+    [ -z "$PREV_DUPLICATES" ] || [ "$PREV_DUPLICATES" = "null" ] && PREV_DUPLICATES=0
 
-    if [ "$SEASON_ISSUE_COUNT" -gt 0 ] || [ "$SEASON_WARNING_COUNT" -gt 0 ]; then
-        echo "---"
-        echo ""
-        echo "## Season/Episode Gaps"
-        echo ""
-        echo "| Type | Detail |"
-        echo "|------|--------|"
-        for issue in "${ISSUES[@]}"; do
-            [[ "$issue" == *"season folder missing"* ]] && echo "| ❌ Issue | $issue |"
-            [[ "$issue" == *"missing episodes"* ]] && echo "| ❌ Issue | $issue |"
-        done
-        for warning in "${WARNINGS[@]}"; do
-            [[ "$warning" == *"eps on disk"* ]] && echo "| ⚠️ Warning | $warning |"
-        done
-        echo ""
-    fi
+    CURRENT_DUPLICATES=$((DUPE_MOVIE_COUNT + DUPE_TV_COUNT))
+    ISSUES_CHANGE=$((ISSUE_COUNT - PREV_ISSUES))
+    WARNINGS_CHANGE=$((WARNING_COUNT - PREV_WARNINGS))
+    DUPLICATES_CHANGE=$((CURRENT_DUPLICATES - PREV_DUPLICATES))
 
-    # Comparison with previous report
-    if [ -f "$REPORT_PREV" ]; then
-        echo "---"
-        echo ""
-        echo "## Comparison with Previous Run"
-        echo ""
+    COMPARISON_JSON=$(jq -n \
+        --argjson prev_issues "$PREV_ISSUES" \
+        --argjson prev_warnings "$PREV_WARNINGS" \
+        --argjson prev_duplicates "$PREV_DUPLICATES" \
+        --argjson issues_change "$ISSUES_CHANGE" \
+        --argjson warnings_change "$WARNINGS_CHANGE" \
+        --argjson duplicates_change "$DUPLICATES_CHANGE" \
+        '{
+            prev_issues: $prev_issues,
+            prev_warnings: $prev_warnings,
+            prev_duplicates: $prev_duplicates,
+            issues_change: $issues_change,
+            warnings_change: $warnings_change,
+            duplicates_change: $duplicates_change
+        }')
+fi
 
-        PREV_ISSUES=$(grep -oP 'Issues \(errors\) \| \K[0-9]+' "$REPORT_PREV" | head -1 || echo "0")
-        PREV_WARNINGS=$(grep -oP 'Warnings \| \K[0-9]+' "$REPORT_PREV" | head -1 || echo "0")
-        PREV_DUPLICATES=$(grep -oP 'Duplicates \| \K[0-9]+' "$REPORT_PREV" | head -1 || echo "0")
-
-        [ -z "$PREV_ISSUES" ] && PREV_ISSUES=0
-        [ -z "$PREV_WARNINGS" ] && PREV_WARNINGS=0
-        [ -z "$PREV_DUPLICATES" ] && PREV_DUPLICATES=0
-
-        CURRENT_DUPLICATES=$((DUPE_MOVIE_COUNT + DUPE_TV_COUNT))
-
-        ISSUES_CHANGE=$((ISSUE_COUNT - PREV_ISSUES))
-        WARNINGS_CHANGE=$((WARNING_COUNT - PREV_WARNINGS))
-        DUPLICATES_CHANGE=$((CURRENT_DUPLICATES - PREV_DUPLICATES))
-
-        format_change() {
-            local change=$1
-            if [ "$change" -gt 0 ]; then echo "**+${change}** ⬆️"
-            elif [ "$change" -lt 0 ]; then echo "**${change}** ⬇️"
-            else echo "No change ➡️"
-            fi
-        }
-
-        echo "| Metric | Previous | Current | Change |"
-        echo "|--------|----------|---------|--------|"
-        echo "| Issues | $PREV_ISSUES | $ISSUE_COUNT | $(format_change "$ISSUES_CHANGE") |"
-        echo "| Warnings | $PREV_WARNINGS | $WARNING_COUNT | $(format_change "$WARNINGS_CHANGE") |"
-        echo "| Duplicates | $PREV_DUPLICATES | $CURRENT_DUPLICATES | $(format_change "$DUPLICATES_CHANGE") |"
-        echo ""
-
-        if [ "$ISSUE_COUNT" -lt "$PREV_ISSUES" ]; then
-            RESOLVED=$((PREV_ISSUES - ISSUE_COUNT))
-            echo "✅ **$RESOLVED issue(s) resolved since last run.**"
-            echo ""
-        fi
-        if [ "$ISSUE_COUNT" -gt "$PREV_ISSUES" ]; then
-            NEW_ISSUES=$((ISSUE_COUNT - PREV_ISSUES))
-            echo "⚠️ **$NEW_ISSUES new issue(s) found since last run.**"
-            echo ""
-        fi
-    fi
-} > "$REPORT_FILE"
+# Write final JSON report
+jq -n \
+    --argjson version 1 \
+    --arg type "metadata-audit" \
+    --arg generated "$(date -Iseconds)" \
+    --argjson duration "$DURATION" \
+    --argjson movies_on_disk "${#LIBRARY_MOVIE_IDS[@]}" \
+    --argjson tv_on_disk "${#LIBRARY_TV_NAMES[@]}" \
+    --argjson movie_metadata "${#MOVIE_META_IDS[@]}" \
+    --argjson tv_metadata "${#TV_META_IDS[@]}" \
+    --argjson issues "$ISSUE_COUNT" \
+    --argjson warnings "$WARNING_COUNT" \
+    --argjson orphaned "$((ORPHANED_MOVIES + ORPHANED_TV))" \
+    --argjson upcoming "$UPCOMING_MOVIES" \
+    --argjson duplicates "$((DUPE_MOVIE_COUNT + DUPE_TV_COUNT))" \
+    --argjson issues_list "$ISSUES_JSON" \
+    --argjson orphaned_movies "$ORPHANED_MOVIES_JSON" \
+    --argjson orphaned_tv "$ORPHANED_TV_JSON" \
+    --argjson upcoming_movies "$UPCOMING_MOVIES_JSON" \
+    --argjson missing_movies "$MISSING_MOVIES_JSON" \
+    --argjson missing_tv "$MISSING_TV_JSON" \
+    --argjson season_issues "$SEASON_ISSUES_JSON" \
+    --argjson comparison "$COMPARISON_JSON" \
+    '{
+        version: $version,
+        type: $type,
+        generated: $generated,
+        duration_seconds: $duration,
+        summary: {
+            movies_on_disk: $movies_on_disk,
+            tv_on_disk: $tv_on_disk,
+            movie_metadata: $movie_metadata,
+            tv_metadata: $tv_metadata,
+            issues: $issues,
+            warnings: $warnings,
+            orphaned: $orphaned,
+            upcoming: $upcoming,
+            duplicates: $duplicates
+        },
+        data: {
+            issues: $issues_list,
+            orphaned: {
+                movies: $orphaned_movies,
+                tv: $orphaned_tv
+            },
+            upcoming_movies: $upcoming_movies,
+            missing: {
+                movies: $missing_movies,
+                tv: $missing_tv
+            },
+            season_gaps: $season_issues
+        },
+        comparison: $comparison
+    }' > "$REPORT_FILE"
 
 echo ""
 echo "Files generated:"
@@ -671,12 +622,12 @@ fi
 if [ "$ISSUE_COUNT" -gt 0 ]; then
     DISCORD_DESC+="
 
-See \`reports/metadata-audit.md\` for details."
+See \`reports/metadata-audit.json\` for details."
     discord_notify "error" "🔍 Metadata Audit" "$DISCORD_DESC"
 elif [ "$WARNING_COUNT" -gt 0 ]; then
     DISCORD_DESC+="
 
-See \`reports/metadata-audit.md\` for details."
+See \`reports/metadata-audit.json\` for details."
     discord_notify "warning" "🔍 Metadata Audit" "$DISCORD_DESC"
 else
     discord_notify "success" "🔍 Metadata Audit" "No issues found."
