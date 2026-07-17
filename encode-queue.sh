@@ -75,6 +75,17 @@ MIN_SIZE_BYTES=$((MIN_SIZE_GB * 1073741824))
 # Typical HEVC compression ratio vs h264 (40-60% size reduction)
 HEVC_RATIO=$ENCODE_QUEUE_HEVC_RATIO
 
+# Encode exclude list (files to skip)
+EXCLUDE_FILE="$SCRIPTS_DIR/encode-exclude.txt"
+EXCLUDE_LIST=()
+if [ -f "$EXCLUDE_FILE" ]; then
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        [[ "$line" == \#* ]] && continue
+        EXCLUDE_LIST+=("$line")
+    done < "$EXCLUDE_FILE"
+fi
+
 # Redirect output
 if [ "$QUIET" = true ]; then
     exec > "$LOG_FILE" 2>&1
@@ -163,12 +174,19 @@ for file in "${VIDEO_FILES[@]}"; do
     # Skip very small files (not worth probing)
     [ "$size_bytes" -lt "$MIN_SIZE_BYTES" ] && continue
 
-    # Get codec and height in a single ffprobe call
-    probe_output=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,height -of "csv=s=,:p=0" "$file" 2>/dev/null)
+    # Get codec, height, and HDR info in a single ffprobe call
+    probe_output=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,height,color_transfer -of "csv=s=,:p=0" "$file" 2>/dev/null)
     codec=$(printf '%s' "$probe_output" | cut -d',' -f1 | tr -d '[:space:]')
     height=$(printf '%s' "$probe_output" | cut -d',' -f2 | tr -d '[:space:]')
+    color_transfer=$(printf '%s' "$probe_output" | cut -d',' -f3 | tr -d '[:space:]')
 
     [ -z "$codec" ] && continue
+
+    # Detect HDR from color transfer characteristics
+    hdr="false"
+    case "$color_transfer" in
+        smpte2084|arib-std-b67) hdr="true" ;;
+    esac
 
     # Clean path for display
     rel_path="$file"
@@ -177,7 +195,17 @@ for file in "${VIDEO_FILES[@]}"; do
     done
     rel_path=$(printf '%s' "$rel_path" | sed 's/ {tmdb-[0-9]*}//g; s/ {tvdb-[0-9]*}//g')
 
-    printf "%s\t%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "$codec" "${height:-0}" "$file" >> "$PROBE_CACHE"
+    # Check exclude list
+    _excluded=false
+    for _excl in "${EXCLUDE_LIST[@]}"; do
+        if [[ "$rel_path" == *"$_excl"* ]]; then
+            _excluded=true
+            break
+        fi
+    done
+    [ "$_excluded" = true ] && continue
+
+    printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "$codec" "${height:-0}" "$hdr" "$file" >> "$PROBE_CACHE"
 
     # Progress
     if [ $((COUNTER % 50)) -eq 0 ]; then
@@ -189,12 +217,12 @@ echo
 
 # --- Extract non-HEVC/non-AV1 files for encode queue ---
 NON_HEVC_COUNT=0
-while IFS=$'\t' read -r rel_path size_bytes codec height full_path; do
+while IFS=$'\t' read -r rel_path size_bytes codec height hdr full_path; do
     [ "$codec" = "hevc" ] && continue
     [ "$codec" = "av1" ] && continue
     resolution="${height}p"
     [ "$height" = "0" ] && resolution="N/A"
-    printf "%s\t%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "$codec" "$resolution" "$full_path" >> "$TMP_FILE"
+    printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$rel_path" "$size_bytes" "$codec" "$resolution" "$hdr" "$full_path" >> "$TMP_FILE"
     NON_HEVC_COUNT=$((NON_HEVC_COUNT + 1))
 done < "$PROBE_CACHE"
 
@@ -214,16 +242,19 @@ echo "=== Encode Queue ==="
 echo "Non-HEVC files found: $NON_HEVC_COUNT (above ${MIN_SIZE_GB}GB)"
 echo "Total non-HEVC size: $(format_size "$TOTAL_NON_HEVC_BYTES")"
 echo "Estimated savings (HEVC): ~$(format_size "$ESTIMATED_SAVINGS")"
+[ ${#EXCLUDE_LIST[@]} -gt 0 ] && echo "Excluded patterns: ${#EXCLUDE_LIST[@]}"
 echo "Duration: ${DURATION}s"
 echo
 echo "Queue (top $QUEUE_COUNT by size):"
 echo "---"
 RANK=0
-while IFS=$'\t' read -r rel_path size_bytes codec resolution full_path; do
+while IFS=$'\t' read -r rel_path size_bytes codec resolution hdr full_path; do
     RANK=$((RANK + 1))
     size_h=$(format_size "$size_bytes")
     est_saved=$(format_size $((size_bytes * (100 - HEVC_RATIO) / 100)))
-    printf "%3d. %-50s %8s  %-5s  %s  (save ~%s)\n" "$RANK" "$rel_path" "$size_h" "$codec" "$resolution" "$est_saved"
+    hdr_tag=""
+    [ "$hdr" = "true" ] && hdr_tag=" [HDR]"
+    printf "%3d. %-50s %8s  %-5s  %s%s  (save ~%s)\n" "$RANK" "$rel_path" "$size_h" "$codec" "$resolution" "$hdr_tag" "$est_saved"
 done <<< "$QUEUE"
 echo "---"
 echo
@@ -242,9 +273,22 @@ QUEUE_JSON=$(echo "$QUEUE" | jq -R -s '
             file: .[0],
             size_bytes: (.[1] | tonumber),
             codec: .[2],
-            resolution: .[3]
+            resolution: .[3],
+            hdr: (.[4] == "true")
         }
     )')
+
+# Determine health status
+if [ "$NON_HEVC_COUNT" -gt 10 ]; then
+    EQ_HEALTH_STATUS="warning"
+    EQ_HEALTH_MSG="$NON_HEVC_COUNT files to re-encode"
+elif [ "$NON_HEVC_COUNT" -gt 0 ]; then
+    EQ_HEALTH_STATUS="ok"
+    EQ_HEALTH_MSG="$NON_HEVC_COUNT files to re-encode"
+else
+    EQ_HEALTH_STATUS="ok"
+    EQ_HEALTH_MSG="All files optimized"
+fi
 
 {
     # Build the main report structure
@@ -252,6 +296,9 @@ QUEUE_JSON=$(echo "$QUEUE" | jq -R -s '
         --argjson version 1 \
         --arg type "encode-queue" \
         --arg generated "$(date -Iseconds)" \
+        --arg generated_by "$SCRIPT_NAME" \
+        --arg health_status "$EQ_HEALTH_STATUS" \
+        --arg health_msg "$EQ_HEALTH_MSG" \
         --arg directories "$DIR_NAMES" \
         --argjson duration "$DURATION" \
         --argjson files_scanned "$NUM_FILES" \
@@ -266,7 +313,9 @@ QUEUE_JSON=$(echo "$QUEUE" | jq -R -s '
             version: $version,
             type: $type,
             generated: $generated,
+            generated_by: $generated_by,
             duration_seconds: $duration,
+            health: {status: $health_status, message: $health_msg},
             summary: {
                 directories: $directories,
                 files_scanned: $files_scanned,
@@ -293,17 +342,20 @@ if [ -d "$TV_DIR" ]; then
         show_name=$(basename "$show_dir")
         show_name_clean=$(printf '%s' "$show_name" | sed 's/ {tmdb-[0-9]*}//g; s/ {tvdb-[0-9]*}//g')
         total_bytes=$(find "$show_dir" -type f \( -iname "*.mkv" -o -iname "*.mp4" \) -printf '%s\n' 2>/dev/null | awk '{sum+=$1} END {printf "%.0f", sum+0}')
-        [ "$total_bytes" -gt 0 ] && printf "%s\t%s\n" "$show_name_clean" "$total_bytes" >> "$TV_SIZES_TMP"
+        episode_count=$(find "$show_dir" -type f \( -iname "*.mkv" -o -iname "*.mp4" \) 2>/dev/null | wc -l)
+        [ "$total_bytes" -gt 0 ] && printf "%s\t%s\t%s\n" "$show_name_clean" "$total_bytes" "$episode_count" >> "$TV_SIZES_TMP"
     done
 
     TOP_SHOWS=$(sort -t$'\t' -k2 -rn "$TV_SIZES_TMP" | head -20)
 
-    # Build top shows JSON
+    # Build top shows JSON with episode count and avg size
     TOP_SHOWS_JSON=$(echo "$TOP_SHOWS" | jq -R -s '
         split("\n") | map(select(length > 0)) | map(
             split("\t") | {
                 name: .[0],
                 size_bytes: (.[1] | tonumber),
+                episodes: (.[2] | tonumber),
+                avg_episode_bytes: (if (.[2] | tonumber) > 0 then ((.[1] | tonumber) / (.[2] | tonumber) | floor) else 0 end),
                 suggestion: (if (.[1] | tonumber) > 53687091200 then "Consider AV1 re-encode"
                              elif (.[1] | tonumber) > 21474836480 then "Good AV1 candidate"
                              else "" end)
@@ -317,13 +369,17 @@ fi
 # Optimization suggestions: large HEVC files from probe cache
 echo "Extracting optimization candidates from cache..."
 OPT_COUNT=0
-while IFS=$'\t' read -r rel_path size_bytes codec height full_path; do
+while IFS=$'\t' read -r rel_path size_bytes codec height hdr full_path; do
     [ "$codec" != "hevc" ] && continue
     [ "$size_bytes" -lt 3221225472 ] && continue  # Skip < 3GB
 
     suggestion=""
     if [ "$height" -ge 2160 ]; then
-        suggestion="4K → consider 1080p if not HDR"
+        if [ "$hdr" = "true" ]; then
+            suggestion="4K HDR → AV1 re-encode (keep resolution)"
+        else
+            suggestion="4K SDR → consider 1080p downscale"
+        fi
     elif [ "$height" -ge 1080 ] && [ "$size_bytes" -gt 5368709120 ]; then
         suggestion="Large 1080p → AV1 re-encode"
     elif [ "$height" -ge 1080 ] && [ "$size_bytes" -gt 3221225472 ]; then
@@ -332,7 +388,7 @@ while IFS=$'\t' read -r rel_path size_bytes codec height full_path; do
         continue
     fi
 
-    printf "%s\t%s\t%sp\t%s\n" "$rel_path" "$size_bytes" "$height" "$suggestion" >> "$OPT_TMP"
+    printf "%s\t%s\t%sp\t%s\t%s\n" "$rel_path" "$size_bytes" "$height" "$hdr" "$suggestion" >> "$OPT_TMP"
     OPT_COUNT=$((OPT_COUNT + 1))
 done < "$PROBE_CACHE"
 
@@ -350,7 +406,8 @@ if [ "$OPT_COUNT" -gt 0 ]; then
                 file: .[0],
                 size_bytes: (.[1] | tonumber),
                 resolution: .[2],
-                suggestion: .[3]
+                hdr: (.[3] == "true"),
+                suggestion: .[4]
             }
         )')
 
@@ -371,7 +428,7 @@ echo "Report saved to: $REPORT_FILE"
 echo "Log saved to: $LOG_FILE"
 
 # Discord notification
-TOP_FILES=$(echo "$QUEUE" | head -5 | while IFS=$'\t' read -r rel_path size_bytes codec resolution full_path; do
+TOP_FILES=$(echo "$QUEUE" | head -5 | while IFS=$'\t' read -r rel_path size_bytes codec resolution hdr full_path; do
     name=$(echo "$rel_path" | cut -d'/' -f1)
     size_h=$(format_size "$size_bytes")
     est_saved=$(format_size $((size_bytes * (100 - HEVC_RATIO) / 100)))

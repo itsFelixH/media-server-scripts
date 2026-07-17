@@ -1,0 +1,9 @@
+# Encode Queue Exclude List
+# Files matching any pattern below will be skipped during encode-queue scans.
+# One pattern per line. Matches against the relative path (partial match).
+# Lines starting with # are comments.
+#
+# Examples:
+# Interstellar (2014)
+# The Lord of the Rings
+# Gossip Girl/Season 01
