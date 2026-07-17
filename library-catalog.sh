@@ -97,80 +97,135 @@ fi
 
 # --- Build movie list ---
 echo "Scanning movies..."
-MOVIE_LIST=()
+MOVIES_TMP=$(mktemp)
+trap 'rm -f "$MOVIES_TMP"' EXIT
+
 while IFS= read -r dir; do
     [ -d "$dir" ] || continue
     name=$(basename "$dir")
     clean=$(clean_name "$name")
-    MOVIE_LIST+=("$clean")
+    # Extract year from name pattern like "Movie Name (2024)"
+    year=$(echo "$clean" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
+    # Strip year from display name
+    display_name=$(echo "$clean" | sed 's/ ([0-9]\{4\})$//')
+    # Get size
+    size_bytes=$(du -sb "$dir" 2>/dev/null | cut -f1)
+    size_bytes=${size_bytes:-0}
+    printf '%s\t%s\t%s\n' "$display_name" "${year:-0}" "$size_bytes" >> "$MOVIES_TMP"
 done < <(find "$MOVIES_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
-MOVIE_COUNT=${#MOVIE_LIST[@]}
+MOVIE_COUNT=$(wc -l < "$MOVIES_TMP" | tr -d ' ')
 echo "  Found: $MOVIE_COUNT movies"
 
 # --- Build TV show list with season/episode counts ---
 echo "Scanning TV shows..."
-TV_LIST=()
-TV_DETAILS=()
+TV_TMP=$(mktemp)
+trap 'rm -f "$MOVIES_TMP" "$TV_TMP"' EXIT
+
 TOTAL_SEASONS=0
 TOTAL_EPISODES=0
 
 while IFS= read -r show_dir; do
     [ -d "$show_dir" ] || continue
     show_name=$(clean_name "$(basename "$show_dir")")
+    # Extract year
+    year=$(echo "$show_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
+    display_name=$(echo "$show_name" | sed 's/ ([0-9]\{4\})$//')
 
     # Count seasons and episodes
     season_count=0
     episode_count=0
-    season_info=""
 
     while IFS= read -r season_dir; do
         [ -d "$season_dir" ] || continue
-        season_name=$(basename "$season_dir")
         eps=$(find "$season_dir" -maxdepth 1 -type f \( -iname "*.mkv" -o -iname "*.mp4" \) 2>/dev/null | wc -l)
         season_count=$((season_count + 1))
         episode_count=$((episode_count + eps))
-        season_info+="    - $season_name ($eps episodes)\n"
     done < <(find "$show_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+
+    # Get total size
+    size_bytes=$(du -sb "$show_dir" 2>/dev/null | cut -f1)
+    size_bytes=${size_bytes:-0}
 
     TOTAL_SEASONS=$((TOTAL_SEASONS + season_count))
     TOTAL_EPISODES=$((TOTAL_EPISODES + episode_count))
-    TV_LIST+=("$show_name")
-    TV_DETAILS+=("$show_name|$season_count|$episode_count|$season_info")
+    printf '%s\t%s\t%s\t%s\t%s\n' "$display_name" "${year:-0}" "$season_count" "$episode_count" "$size_bytes" >> "$TV_TMP"
 done < <(find "$TV_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
-TV_COUNT=${#TV_LIST[@]}
+TV_COUNT=$(wc -l < "$TV_TMP" | tr -d ' ')
 echo "  Found: $TV_COUNT shows, $TOTAL_SEASONS seasons, $TOTAL_EPISODES episodes"
 echo
 
 # --- Generate JSON catalog ---
 echo "Generating catalog..."
 
-# Build movies JSON array
-MOVIES_JSON=$(printf '%s\n' "${MOVIE_LIST[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+# Build movies JSON array (structured with name, year, size_bytes)
+MOVIES_JSON=$(jq -R -s '
+    split("\n") | map(select(length > 0)) | map(
+        split("\t") | {
+            name: .[0],
+            year: (.[1] | tonumber | if . == 0 then null else . end),
+            size_bytes: (.[2] | tonumber)
+        }
+    )' < "$MOVIES_TMP")
 
-# Build TV shows JSON array
-TV_JSON="[]"
-for detail in "${TV_DETAILS[@]}"; do
-    IFS='|' read -r name seasons eps info <<< "$detail"
-    TV_JSON=$(echo "$TV_JSON" | jq --arg name "$name" --argjson seasons "$seasons" --argjson episodes "$eps" \
-        '. + [{"name": $name, "seasons": $seasons, "episodes": $episodes}]')
-done
+# Build TV shows JSON array (structured with name, year, seasons, episodes, size_bytes)
+TV_JSON=$(jq -R -s '
+    split("\n") | map(select(length > 0)) | map(
+        split("\t") | {
+            name: .[0],
+            year: (.[1] | tonumber | if . == 0 then null else . end),
+            seasons: (.[2] | tonumber),
+            episodes: (.[3] | tonumber),
+            size_bytes: (.[4] | tonumber)
+        }
+    )' < "$TV_TMP")
+
+# --- Added date tracking ---
+# Load existing added_dates from previous catalog (or empty)
+ADDED_DATES_JSON='{}'
+if [ -f "$PREV_CATALOG" ]; then
+    ADDED_DATES_JSON=$(jq -r '.data.added_dates // {}' "$PREV_CATALOG" 2>/dev/null || echo '{}')
+    [ "$ADDED_DATES_JSON" = "null" ] && ADDED_DATES_JSON='{}'
+fi
+
+# Add today's date for any new entries not already tracked
+TODAY=$(date +%Y-%m-%d)
+NEW_MOVIE_NAMES=$(echo "$MOVIES_JSON" | jq -r '.[].name')
+NEW_SHOW_NAMES=$(echo "$TV_JSON" | jq -r '.[].name')
+
+# Merge: keep existing dates, add today for new ones
+ADDED_DATES_JSON=$(echo "$ADDED_DATES_JSON" | jq --arg today "$TODAY" --argjson movies "$(echo "$NEW_MOVIE_NAMES" | jq -R -s 'split("\n") | map(select(length > 0))')" --argjson shows "$(echo "$NEW_SHOW_NAMES" | jq -R -s 'split("\n") | map(select(length > 0))')" '
+    . as $existing |
+    ($movies + $shows) | reduce .[] as $name ($existing;
+        if .[$name] then . else . + {($name): $today} end
+    )
+')
+
+# Build recent additions (items added in the last 30 days)
+RECENT_JSON=$(echo "$ADDED_DATES_JSON" | jq --arg cutoff "$(date -d '30 days ago' +%Y-%m-%d)" '
+    to_entries | map(select(.value >= $cutoff)) | sort_by(.value) | reverse | map({name: .key, added: .value})
+')
 
 # Write catalog JSON
 jq -n \
     --argjson version 1 \
     --arg type "library-catalog" \
     --arg generated "$(date -Iseconds)" \
+    --arg generated_by "$SCRIPT_NAME" \
     --argjson movie_count "$MOVIE_COUNT" \
     --argjson tv_count "$TV_COUNT" \
     --argjson total_seasons "$TOTAL_SEASONS" \
     --argjson total_episodes "$TOTAL_EPISODES" \
     --argjson movies "$MOVIES_JSON" \
     --argjson shows "$TV_JSON" \
+    --argjson added_dates "$ADDED_DATES_JSON" \
+    --argjson recent "$RECENT_JSON" \
     '{
         version: $version,
         type: $type,
         generated: $generated,
+        generated_by: $generated_by,
         duration_seconds: 0,
+        health: {status: "ok", message: "Catalog generated successfully"},
         summary: {
             movies: $movie_count,
             tv_shows: $tv_count,
@@ -179,7 +234,9 @@ jq -n \
         },
         data: {
             movies: $movies,
-            shows: $shows
+            shows: $shows,
+            added_dates: $added_dates,
+            recent: $recent
         },
         comparison: null
     }' > "$CATALOG_FILE"
@@ -198,9 +255,9 @@ NEW_EPISODES=()
 if [ -f "$PREV_CATALOG" ]; then
     echo "Comparing with previous catalog..."
 
-    # Extract movie lists from both catalogs using jq
-    PREV_MOVIES=$(jq -r '(.data.movies // .movies)[]' "$PREV_CATALOG" 2>/dev/null | sort)
-    CURR_MOVIES=$(printf '%s\n' "${MOVIE_LIST[@]}" | sort)
+    # Extract movie names from both catalogs
+    PREV_MOVIES=$(jq -r '(.data.movies // .movies)[] | if type == "object" then .name else . end' "$PREV_CATALOG" 2>/dev/null | sort)
+    CURR_MOVIES=$(echo "$MOVIES_JSON" | jq -r '.[].name' | sort)
 
     while IFS= read -r movie; do
         [ -z "$movie" ] && continue
@@ -214,7 +271,7 @@ if [ -f "$PREV_CATALOG" ]; then
 
     # Extract TV show names
     PREV_SHOWS=$(jq -r '(.data.shows // .shows)[].name' "$PREV_CATALOG" 2>/dev/null | sort)
-    CURR_SHOWS=$(printf '%s\n' "${TV_LIST[@]}" | sort)
+    CURR_SHOWS=$(echo "$TV_JSON" | jq -r '.[].name' | sort)
 
     while IFS= read -r show; do
         [ -z "$show" ] && continue
@@ -229,19 +286,17 @@ if [ -f "$PREV_CATALOG" ]; then
     # Detect new seasons and new episodes for existing shows
     while IFS=$'\t' read -r prev_name prev_seasons prev_episodes; do
         [ -z "$prev_name" ] && continue
-        for detail in "${TV_DETAILS[@]}"; do
-            IFS='|' read -r curr_name curr_seasons curr_eps curr_info <<< "$detail"
-            if [ "$curr_name" = "$prev_name" ]; then
-                if [ "$curr_seasons" -gt "$prev_seasons" ]; then
-                    new_count=$((curr_seasons - prev_seasons))
-                    NEW_SEASONS+=("$curr_name (+$new_count season(s), now $curr_seasons)")
-                elif [ "$curr_eps" -gt "$prev_episodes" ]; then
-                    new_eps=$((curr_eps - prev_episodes))
-                    NEW_EPISODES+=("$curr_name (+$new_eps episode(s), now $curr_eps)")
-                fi
-                break
-            fi
-        done
+        # Look up current show in TV_JSON
+        curr_seasons=$(echo "$TV_JSON" | jq -r --arg name "$prev_name" '.[] | select(.name == $name) | .seasons')
+        curr_eps=$(echo "$TV_JSON" | jq -r --arg name "$prev_name" '.[] | select(.name == $name) | .episodes')
+        [ -z "$curr_seasons" ] || [ "$curr_seasons" = "null" ] && continue
+        if [ "$curr_seasons" -gt "$prev_seasons" ] 2>/dev/null; then
+            new_count=$((curr_seasons - prev_seasons))
+            NEW_SEASONS+=("$prev_name (+$new_count season(s), now $curr_seasons)")
+        elif [ "$curr_eps" -gt "$prev_episodes" ] 2>/dev/null; then
+            new_eps=$((curr_eps - prev_episodes))
+            NEW_EPISODES+=("$prev_name (+$new_eps episode(s), now $curr_eps)")
+        fi
     done < <(jq -r '(.data.shows // .shows)[] | "\(.name)\t\(.seasons)\t\(.episodes)"' "$PREV_CATALOG" 2>/dev/null)
 
     echo "  Added movies: ${#ADDED_MOVIES[@]}"
