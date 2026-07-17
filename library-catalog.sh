@@ -1,7 +1,7 @@
 #!/bin/bash
 # Library Catalog
 # Generates a snapshot of the media library content.
-# Exports to markdown, diffs against previous snapshot, posts summary to Discord.
+# Exports to JSON, diffs against previous snapshot, posts summary to Discord.
 #
 # Usage:
 #   ./library-catalog.sh [options]
@@ -18,7 +18,7 @@ Library Catalog — Generates a snapshot of your media library.
 
 Usage: library-catalog.sh [options]
 
-Creates a markdown catalog of all movies and TV shows in your library.
+Creates a JSON catalog of all movies and TV shows in your library.
 Compares against the previous snapshot to show what was added/removed.
 Posts a summary to Discord.
 
@@ -27,8 +27,8 @@ Options:
   -q, --quiet       Suppress terminal output (log only)
   --no-discord      Skip Discord notification
 
-Output: ~/kometa/scripts/logs/library-catalog.md (overwritten each run)
-Previous snapshot saved as library-catalog.prev.md for diffing.
+Output: ~/kometa/scripts/reports/library-catalog.json (overwritten each run)
+Previous snapshot saved as library-catalog.prev.json for diffing.
 HELP
 }
 
@@ -52,8 +52,8 @@ source "$SCRIPTS_DIR/config.sh"
 LOG_FILE="$LOG_DIR/library-catalog/library-catalog_$(date +%Y%m%d_%H%M%S).log"
 mkdir -p "$LOG_DIR/library-catalog"
 
-CATALOG_FILE="$REPORT_DIR/library-catalog.md"
-PREV_CATALOG="$REPORT_DIR/library-catalog.prev.md"
+CATALOG_FILE="$REPORT_DIR/library-catalog.json"
+PREV_CATALOG="$REPORT_DIR/library-catalog.prev.json"
 
 # Redirect output
 if [ "$QUIET" = true ]; then
@@ -141,42 +141,48 @@ TV_COUNT=${#TV_LIST[@]}
 echo "  Found: $TV_COUNT shows, $TOTAL_SEASONS seasons, $TOTAL_EPISODES episodes"
 echo
 
-# --- Generate markdown catalog ---
+# --- Generate JSON catalog ---
 echo "Generating catalog..."
-{
-    echo "# 📚 Library Catalog"
-    echo ""
-    echo "**Generated:** $(date '+%Y-%m-%d %H:%M:%S')"
-    echo ""
-    echo "---"
-    echo ""
-    echo "## Summary"
-    echo ""
-    echo "| Metric | Count |"
-    echo "|--------|-------|"
-    echo "| Movies | $MOVIE_COUNT |"
-    echo "| TV Shows | $TV_COUNT |"
-    echo "| Seasons | $TOTAL_SEASONS |"
-    echo "| Episodes | $TOTAL_EPISODES |"
-    echo ""
-    echo "---"
-    echo ""
-    echo "## Movies ($MOVIE_COUNT)"
-    echo ""
-    for movie in "${MOVIE_LIST[@]}"; do
-        echo "- $movie"
-    done
-    echo ""
-    echo "---"
-    echo ""
-    echo "## TV Shows ($TV_COUNT)"
-    echo ""
-    for detail in "${TV_DETAILS[@]}"; do
-        IFS='|' read -r name seasons eps info <<< "$detail"
-        echo "- **$name** ($seasons seasons, $eps episodes)"
-    done
-    echo ""
-} > "$CATALOG_FILE"
+
+# Build movies JSON array
+MOVIES_JSON=$(printf '%s\n' "${MOVIE_LIST[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+
+# Build TV shows JSON array
+TV_JSON="[]"
+for detail in "${TV_DETAILS[@]}"; do
+    IFS='|' read -r name seasons eps info <<< "$detail"
+    TV_JSON=$(echo "$TV_JSON" | jq --arg name "$name" --argjson seasons "$seasons" --argjson episodes "$eps" \
+        '. + [{"name": $name, "seasons": $seasons, "episodes": $episodes}]')
+done
+
+# Write catalog JSON
+jq -n \
+    --argjson version 1 \
+    --arg type "library-catalog" \
+    --arg generated "$(date -Iseconds)" \
+    --argjson movie_count "$MOVIE_COUNT" \
+    --argjson tv_count "$TV_COUNT" \
+    --argjson total_seasons "$TOTAL_SEASONS" \
+    --argjson total_episodes "$TOTAL_EPISODES" \
+    --argjson movies "$MOVIES_JSON" \
+    --argjson shows "$TV_JSON" \
+    '{
+        version: $version,
+        type: $type,
+        generated: $generated,
+        duration_seconds: 0,
+        summary: {
+            movies: $movie_count,
+            tv_shows: $tv_count,
+            seasons: $total_seasons,
+            episodes: $total_episodes
+        },
+        data: {
+            movies: $movies,
+            shows: $shows
+        },
+        comparison: null
+    }' > "$CATALOG_FILE"
 
 echo "  Saved: $CATALOG_FILE"
 echo
@@ -192,45 +198,37 @@ NEW_EPISODES=()
 if [ -f "$PREV_CATALOG" ]; then
     echo "Comparing with previous catalog..."
 
-    # Extract movie lists from both catalogs
-    PREV_MOVIES=$(sed -n '/^## Movies/,/^---$/p' "$PREV_CATALOG" | grep '^- ' | sed 's/^- //')
-    CURR_MOVIES=$(printf '%s\n' "${MOVIE_LIST[@]}")
+    # Extract movie lists from both catalogs using jq
+    PREV_MOVIES=$(jq -r '(.data.movies // .movies)[]' "$PREV_CATALOG" 2>/dev/null | sort)
+    CURR_MOVIES=$(printf '%s\n' "${MOVIE_LIST[@]}" | sort)
 
     while IFS= read -r movie; do
         [ -z "$movie" ] && continue
         ADDED_MOVIES+=("$movie")
-    done < <(comm -13 <(echo "$PREV_MOVIES" | sort) <(echo "$CURR_MOVIES" | sort))
+    done < <(comm -13 <(echo "$PREV_MOVIES") <(echo "$CURR_MOVIES"))
 
     while IFS= read -r movie; do
         [ -z "$movie" ] && continue
         REMOVED_MOVIES+=("$movie")
-    done < <(comm -23 <(echo "$PREV_MOVIES" | sort) <(echo "$CURR_MOVIES" | sort))
+    done < <(comm -23 <(echo "$PREV_MOVIES") <(echo "$CURR_MOVIES"))
 
-    # Extract TV show lists (name only)
-    PREV_SHOWS=$(sed -n '/^## TV Shows/,/^---$/p' "$PREV_CATALOG" | grep '^- ' | sed 's/^- \*\*//;s/\*\*.*//')
-    CURR_SHOWS=$(printf '%s\n' "${TV_LIST[@]}")
+    # Extract TV show names
+    PREV_SHOWS=$(jq -r '(.data.shows // .shows)[].name' "$PREV_CATALOG" 2>/dev/null | sort)
+    CURR_SHOWS=$(printf '%s\n' "${TV_LIST[@]}" | sort)
 
     while IFS= read -r show; do
         [ -z "$show" ] && continue
         ADDED_SHOWS+=("$show")
-    done < <(comm -13 <(echo "$PREV_SHOWS" | sort) <(echo "$CURR_SHOWS" | sort))
+    done < <(comm -13 <(echo "$PREV_SHOWS") <(echo "$CURR_SHOWS"))
 
     while IFS= read -r show; do
         [ -z "$show" ] && continue
         REMOVED_SHOWS+=("$show")
-    done < <(comm -23 <(echo "$PREV_SHOWS" | sort) <(echo "$CURR_SHOWS" | sort))
+    done < <(comm -23 <(echo "$PREV_SHOWS") <(echo "$CURR_SHOWS"))
 
     # Detect new seasons and new episodes for existing shows
-    # Extract "ShowName (N seasons, M episodes)" from previous catalog and compare
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        prev_name=$(echo "$line" | sed 's/^- \*\*//;s/\*\*.*//')
-        prev_seasons=$(echo "$line" | grep -oP '\(\K[0-9]+(?= seasons)')
-        prev_episodes=$(echo "$line" | grep -oP ', \K[0-9]+(?= episodes)')
-        [ -z "$prev_seasons" ] && continue
-        [ -z "$prev_episodes" ] && prev_episodes=0
-
-        # Find same show in current details
+    while IFS=$'\t' read -r prev_name prev_seasons prev_episodes; do
+        [ -z "$prev_name" ] && continue
         for detail in "${TV_DETAILS[@]}"; do
             IFS='|' read -r curr_name curr_seasons curr_eps curr_info <<< "$detail"
             if [ "$curr_name" = "$prev_name" ]; then
@@ -244,7 +242,7 @@ if [ -f "$PREV_CATALOG" ]; then
                 break
             fi
         done
-    done < <(sed -n '/^## TV Shows/,/^---$/p' "$PREV_CATALOG" | grep '^- ')
+    done < <(jq -r '(.data.shows // .shows)[] | "\(.name)\t\(.seasons)\t\(.episodes)"' "$PREV_CATALOG" 2>/dev/null)
 
     echo "  Added movies: ${#ADDED_MOVIES[@]}"
     echo "  Removed movies: ${#REMOVED_MOVIES[@]}"
@@ -290,7 +288,10 @@ echo "=== Catalog Complete ==="
 echo "Duration: ${DURATION}s"
 echo "Log saved to: $LOG_FILE"
 
-# Append changes and comparison to catalog file
+# Append changes to JSON catalog
+# First, update duration now that we know it
+jq --argjson dur "$DURATION" '.duration_seconds = $dur' "$CATALOG_FILE" > "$CATALOG_FILE.tmp" && mv "$CATALOG_FILE.tmp" "$CATALOG_FILE"
+
 if [ -f "$PREV_CATALOG" ]; then
     HAS_CHANGES=false
     [ ${#ADDED_MOVIES[@]} -gt 0 ] && HAS_CHANGES=true
@@ -300,63 +301,31 @@ if [ -f "$PREV_CATALOG" ]; then
     [ ${#NEW_SEASONS[@]} -gt 0 ] && HAS_CHANGES=true
     [ ${#NEW_EPISODES[@]} -gt 0 ] && HAS_CHANGES=true
 
-    {
-        echo ""
-        echo "---"
-        echo ""
-        echo "## Changes Since Last Run"
-        echo ""
+    if [ "$HAS_CHANGES" = true ]; then
+        ADDED_MOVIES_JSON=$(printf '%s\n' "${ADDED_MOVIES[@]}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
+        REMOVED_MOVIES_JSON=$(printf '%s\n' "${REMOVED_MOVIES[@]}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
+        ADDED_SHOWS_JSON=$(printf '%s\n' "${ADDED_SHOWS[@]}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
+        REMOVED_SHOWS_JSON=$(printf '%s\n' "${REMOVED_SHOWS[@]}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
+        NEW_SEASONS_JSON=$(printf '%s\n' "${NEW_SEASONS[@]}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
+        NEW_EPISODES_JSON=$(printf '%s\n' "${NEW_EPISODES[@]}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
 
-        if [ "$HAS_CHANGES" = true ]; then
-            echo "| Category | Added | Removed |"
-            echo "|----------|-------|---------|"
-            echo "| Movies | +${#ADDED_MOVIES[@]} | -${#REMOVED_MOVIES[@]} |"
-            echo "| TV Shows | +${#ADDED_SHOWS[@]} | -${#REMOVED_SHOWS[@]} |"
-            echo "| New Seasons | +${#NEW_SEASONS[@]} | — |"
-            echo "| Shows with New Episodes | +${#NEW_EPISODES[@]} | — |"
-            echo ""
-
-            if [ ${#ADDED_MOVIES[@]} -gt 0 ]; then
-                echo "### New Movies"
-                echo ""
-                for m in "${ADDED_MOVIES[@]}"; do echo "- $m"; done
-                echo ""
-            fi
-            if [ ${#REMOVED_MOVIES[@]} -gt 0 ]; then
-                echo "### Removed Movies"
-                echo ""
-                for m in "${REMOVED_MOVIES[@]}"; do echo "- ~~$m~~"; done
-                echo ""
-            fi
-            if [ ${#ADDED_SHOWS[@]} -gt 0 ]; then
-                echo "### New TV Shows"
-                echo ""
-                for s in "${ADDED_SHOWS[@]}"; do echo "- $s"; done
-                echo ""
-            fi
-            if [ ${#REMOVED_SHOWS[@]} -gt 0 ]; then
-                echo "### Removed TV Shows"
-                echo ""
-                for s in "${REMOVED_SHOWS[@]}"; do echo "- ~~$s~~"; done
-                echo ""
-            fi
-            if [ ${#NEW_SEASONS[@]} -gt 0 ]; then
-                echo "### New Seasons"
-                echo ""
-                for s in "${NEW_SEASONS[@]}"; do echo "- $s"; done
-                echo ""
-            fi
-            if [ ${#NEW_EPISODES[@]} -gt 0 ]; then
-                echo "### New Episodes"
-                echo ""
-                for s in "${NEW_EPISODES[@]}"; do echo "- $s"; done
-                echo ""
-            fi
-        else
-            echo "No changes detected."
-            echo ""
-        fi
-    } >> "$CATALOG_FILE"
+        # Update the catalog file with comparison
+        jq --argjson added_movies "${ADDED_MOVIES_JSON:-[]}" \
+           --argjson removed_movies "${REMOVED_MOVIES_JSON:-[]}" \
+           --argjson added_shows "${ADDED_SHOWS_JSON:-[]}" \
+           --argjson removed_shows "${REMOVED_SHOWS_JSON:-[]}" \
+           --argjson new_seasons "${NEW_SEASONS_JSON:-[]}" \
+           --argjson new_episodes "${NEW_EPISODES_JSON:-[]}" \
+           '.comparison = {
+               has_changes: true,
+               added_movies: $added_movies,
+               removed_movies: $removed_movies,
+               added_shows: $added_shows,
+               removed_shows: $removed_shows,
+               new_seasons: $new_seasons,
+               new_episodes: $new_episodes
+           }' "$CATALOG_FILE" > "$CATALOG_FILE.tmp" && mv "$CATALOG_FILE.tmp" "$CATALOG_FILE"
+    fi
 fi
 
 echo "Catalog saved to: $CATALOG_FILE"
