@@ -18,7 +18,7 @@ Report Archiver — Archives new/changed reports to /mnt/Media/reports/
 
 Usage: archive-reports.sh [options]
 
-Copies markdown reports from ~/kometa/scripts/reports/ to /mnt/Media/reports/
+Copies reports (JSON and markdown) from ~/kometa/scripts/reports/ to /mnt/Media/reports/
 with date-stamped filenames. Only copies when content has changed.
 
 Options:
@@ -81,20 +81,25 @@ REPORT_COUNT=0
 REPORT_SKIPPED=0
 while IFS= read -r -d '' file; do
     filename=$(basename "$file")
+    ext="${filename##*.}"
     base_name="${filename%.*}"
 
     # Create per-report subdirectory
     report_dir="$REPORTS_DIR/$base_name"
     mkdir -p "$report_dir"
 
-    # Extract generation date from the report (looks for "**Generated:** YYYY-MM-DD")
-    report_date=$(grep -oP '\*\*Generated:\*\*\s*\K[0-9]{4}-[0-9]{2}-[0-9]{2}' "$file" 2>/dev/null | head -1)
+    # Extract generation date from the report
+    if [ "$ext" = "json" ]; then
+        report_date=$(jq -r '.generated // empty' "$file" 2>/dev/null | grep -oP '^[0-9]{4}-[0-9]{2}-[0-9]{2}')
+    else
+        report_date=$(grep -oP '\*\*Generated:\*\*\s*\K[0-9]{4}-[0-9]{2}-[0-9]{2}' "$file" 2>/dev/null | head -1)
+    fi
     [ -z "$report_date" ] && report_date=$(date +%Y-%m-%d)
 
-    dest_file="$report_dir/${base_name}-${report_date}.md"
+    dest_file="$report_dir/${base_name}-${report_date}.${ext}"
 
     # Skip if identical to the latest archived version
-    latest_archived=$(find "$report_dir" -name "${base_name}-*.md" ! -name "latest.md" -type f 2>/dev/null | sort | tail -1)
+    latest_archived=$(find "$report_dir" -name "${base_name}-*.${ext}" ! -name "latest.${ext}" -type f 2>/dev/null | sort | tail -1)
     if [ -n "$latest_archived" ] && diff -q "$file" "$latest_archived" >/dev/null 2>&1; then
         ((REPORT_SKIPPED++))
         continue
@@ -109,7 +114,7 @@ while IFS= read -r -d '' file; do
     cp "$file" "$dest_file" 2>/dev/null
     ((REPORT_COUNT++))
     echo "  [+] $base_name ($report_date)"
-done < <(find "$REPORT_DIR" -maxdepth 1 -name "*.md" ! -name "*.prev.md" -type f -print0)
+done < <(find "$REPORT_DIR" -maxdepth 1 \( -name "*.md" -o -name "*.json" \) ! -name "*.prev.*" ! -name "system-status.json" -type f -print0)
 
 if [ "$REPORT_COUNT" -gt 0 ]; then
     echo "[✓] Reports archived: $REPORT_COUNT new, $REPORT_SKIPPED unchanged (skipped)"
