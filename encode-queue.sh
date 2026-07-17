@@ -65,7 +65,7 @@ source "$SCRIPTS_DIR/config.sh"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="$LOG_DIR/encode-queue/encode-queue_${TIMESTAMP}.log"
-REPORT_FILE="$REPORT_DIR/encode-queue.md"
+REPORT_FILE="$REPORT_DIR/encode-queue.json"
 mkdir -p "$LOG_DIR/encode-queue"
 
 LIMIT=${LIMIT:-$ENCODE_QUEUE_LIMIT}
@@ -233,42 +233,53 @@ DIR_NAMES=""
 for d in "${DIRECTORIES[@]}"; do DIR_NAMES+="$(basename "$d"), "; done
 DIR_NAMES="${DIR_NAMES%, }"
 
-# Generate Markdown Report
+# Generate JSON Report
+
+# Build queue items JSON
+QUEUE_JSON=$(echo "$QUEUE" | jq -R -s '
+    split("\n") | map(select(length > 0)) | map(
+        split("\t") | {
+            file: .[0],
+            size_bytes: (.[1] | tonumber),
+            codec: .[2],
+            resolution: .[3]
+        }
+    )')
+
 {
-    echo "# 🔄 Encode Queue Report"
-    echo ""
-    echo "**Generated:** $(date '+%Y-%m-%d %H:%M:%S')"
-    echo ""
-    echo "---"
-    echo ""
-    echo "## 📊 Summary"
-    echo ""
-    echo "| Metric | Value |"
-    echo "|--------|-------|"
-    echo "| Directory | \`$DIR_NAMES\` |"
-    echo "| Scan Duration | ${DURATION}s |"
-    echo "| Video Files Scanned | $NUM_FILES |"
-    echo "| Non-HEVC Files Found | $NON_HEVC_COUNT |"
-    echo "| Total Size | $(format_size "$TOTAL_NON_HEVC_BYTES") |"
-    echo "| Estimated Savings | ~$(format_size "$ESTIMATED_SAVINGS") |"
-    echo "| Compression Ratio | ~${HEVC_RATIO}% (HEVC) |"
-    echo "| Min File Size Filter | ${MIN_SIZE_GB} GB |"
-    echo ""
-    echo "---"
-    echo ""
-    echo "## 📋 Encode Queue (Top $QUEUE_COUNT Files)"
-    echo ""
-    echo "| Rank | File | Size | Codec | Resolution | Est. Savings |"
-    echo "|------|------|------|-------|------------|--------------|"
-    RANK=0
-    while IFS=$'\t' read -r rel_path size_bytes codec resolution full_path; do
-        RANK=$((RANK + 1))
-        size_h=$(format_size "$size_bytes")
-        est_saved=$(format_size $((size_bytes * (100 - HEVC_RATIO) / 100)))
-        rel_path_escaped=$(printf '%s' "$rel_path" | sed 's/|/\\|/g')
-        printf "| %3d | \`%s\` | %s | %s | %s | %s |\n" "$RANK" "$rel_path_escaped" "$size_h" "$codec" "$resolution" "$est_saved"
-    done <<< "$QUEUE"
-    echo ""
+    # Build the main report structure
+    jq -n \
+        --argjson version 1 \
+        --arg type "encode-queue" \
+        --arg generated "$(date -Iseconds)" \
+        --arg directories "$DIR_NAMES" \
+        --argjson duration "$DURATION" \
+        --argjson files_scanned "$NUM_FILES" \
+        --argjson non_hevc_count "$NON_HEVC_COUNT" \
+        --argjson total_size_bytes "${TOTAL_NON_HEVC_BYTES:-0}" \
+        --argjson estimated_savings "${ESTIMATED_SAVINGS:-0}" \
+        --argjson hevc_ratio "$HEVC_RATIO" \
+        --argjson min_size_gb "$MIN_SIZE_GB" \
+        --argjson queue_count "$QUEUE_COUNT" \
+        --argjson queue "$QUEUE_JSON" \
+        '{
+            version: $version,
+            type: $type,
+            generated: $generated,
+            duration_seconds: $duration,
+            summary: {
+                directories: $directories,
+                files_scanned: $files_scanned,
+                non_hevc_count: $non_hevc_count,
+                total_size_bytes: $total_size_bytes,
+                estimated_savings_bytes: $estimated_savings,
+                hevc_ratio: $hevc_ratio,
+                min_size_gb: $min_size_gb
+            },
+            data: {
+                queue: $queue
+            }
+        }'
 } > "$REPORT_FILE"
 
 # --- Additional analysis: biggest TV shows and optimization suggestions ---
@@ -287,27 +298,20 @@ if [ -d "$TV_DIR" ]; then
 
     TOP_SHOWS=$(sort -t$'\t' -k2 -rn "$TV_SIZES_TMP" | head -20)
 
-    {
-        echo ""
-        echo "---"
-        echo ""
-        echo "## 📺 Biggest TV Shows (Top 20)"
-        echo ""
-        echo "| Show | Total Size | Suggestion |"
-        echo "|------|-----------|------------|"
-        while IFS=$'\t' read -r name total_bytes; do
-            size_h=$(format_size "$total_bytes")
-            suggestion=""
-            if [ "$total_bytes" -gt 53687091200 ]; then  # >50GB
-                suggestion="Consider AV1 re-encode"
-            elif [ "$total_bytes" -gt 21474836480 ]; then  # >20GB
-                suggestion="Good AV1 candidate"
-            fi
-            name_escaped=$(printf '%s' "$name" | sed 's/|/\\|/g')
-            printf "| %s | %s | %s |\n" "$name_escaped" "$size_h" "$suggestion"
-        done <<< "$TOP_SHOWS"
-        echo ""
-    } >> "$REPORT_FILE"
+    # Build top shows JSON
+    TOP_SHOWS_JSON=$(echo "$TOP_SHOWS" | jq -R -s '
+        split("\n") | map(select(length > 0)) | map(
+            split("\t") | {
+                name: .[0],
+                size_bytes: (.[1] | tonumber),
+                suggestion: (if (.[1] | tonumber) > 53687091200 then "Consider AV1 re-encode"
+                             elif (.[1] | tonumber) > 21474836480 then "Good AV1 candidate"
+                             else "" end)
+            }
+        )')
+
+    # Append to report JSON
+    jq --argjson top_shows "$TOP_SHOWS_JSON" '.data.top_shows = $top_shows' "$REPORT_FILE" > "$REPORT_FILE.tmp" && mv "$REPORT_FILE.tmp" "$REPORT_FILE"
 fi
 
 # Optimization suggestions: large HEVC files from probe cache
@@ -339,28 +343,28 @@ if [ "$OPT_COUNT" -gt 0 ]; then
     OPT_TOTAL=$(awk -F'\t' '{sum += $2} END {printf "%.0f", sum+0}' "$OPT_TMP")
     OPT_SAVINGS=$(awk -F'\t' '{sum += $2} END {printf "%.0f", sum * 30 / 100}' "$OPT_TMP")
 
-    {
-        echo "---"
-        echo ""
-        echo "## 🚀 Optimization Suggestions (HEVC → AV1 / Resolution)"
-        echo ""
-        echo "Already encoded in HEVC but still large. Further savings possible with AV1 (~30% smaller) or resolution reduction."
-        echo ""
-        echo "| Metric | Value |"
-        echo "|--------|-------|"
-        echo "| Candidates | $OPT_COUNT |"
-        echo "| Total size | $(format_size "$OPT_TOTAL") |"
-        echo "| Est. savings (AV1) | ~$(format_size "$OPT_SAVINGS") |"
-        echo ""
-        echo "| File | Size | Resolution | Suggestion |"
-        echo "|------|------|-----------|------------|"
-        while IFS=$'\t' read -r rel_path size_bytes resolution suggestion; do
-            size_h=$(format_size "$size_bytes")
-            rel_path_escaped=$(printf '%s' "$rel_path" | sed 's/|/\\|/g')
-            printf "| \`%s\` | %s | %s | %s |\n" "$rel_path_escaped" "$size_h" "$resolution" "$suggestion"
-        done <<< "$OPT_QUEUE"
-        echo ""
-    } >> "$REPORT_FILE"
+    # Build optimization JSON
+    OPT_JSON=$(echo "$OPT_QUEUE" | jq -R -s '
+        split("\n") | map(select(length > 0)) | map(
+            split("\t") | {
+                file: .[0],
+                size_bytes: (.[1] | tonumber),
+                resolution: .[2],
+                suggestion: .[3]
+            }
+        )')
+
+    # Append to report JSON
+    jq --argjson opt_count "$OPT_COUNT" \
+       --argjson opt_total_bytes "${OPT_TOTAL:-0}" \
+       --argjson opt_savings_bytes "${OPT_SAVINGS:-0}" \
+       --argjson optimization "$OPT_JSON" \
+       '.data.optimization = {
+           count: $opt_count,
+           total_size_bytes: $opt_total_bytes,
+           estimated_savings_bytes: $opt_savings_bytes,
+           items: $optimization
+       }' "$REPORT_FILE" > "$REPORT_FILE.tmp" && mv "$REPORT_FILE.tmp" "$REPORT_FILE"
 fi
 
 echo "Report saved to: $REPORT_FILE"
