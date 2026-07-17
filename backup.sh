@@ -115,6 +115,7 @@ fi
 # --- Scripts config ---
 echo "Collecting scripts config..."
 cp "$SCRIPTS_DIR/config.yml" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
+cp "$SCRIPTS_DIR/encode-exclude.txt" "$TEMP_DIR/kometa/scripts/" 2>/dev/null
 
 # --- UMTK/TSSK ---
 echo "Collecting UMTK config..."
