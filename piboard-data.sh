@@ -181,26 +181,25 @@ REPORTS_CACHE="$DATA_DIR/.reports.cache"
 if cache_stale "$REPORTS_CACHE" 3600; then
     # Library stats
     _lib_json='{}'
-    if [ -f "$REPORT_DIR/library-catalog.md" ]; then
-        _m=$(grep '| Movies |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
-        _s=$(grep '| TV Shows |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
-        _e=$(grep '| Episodes |' "$REPORT_DIR/library-catalog.md" | grep -oP '\| \K[0-9]+')
-        _lib_json=$(jq -n --argjson m "${_m:-0}" --argjson s "${_s:-0}" --argjson e "${_e:-0}" '{movies:$m,shows:$s,episodes:$e}')
+    if [ -f "$REPORT_DIR/library-catalog.json" ]; then
+        _lib_json=$(jq '{movies: .summary.movies, shows: .summary.tv_shows, episodes: .summary.episodes}' "$REPORT_DIR/library-catalog.json" 2>/dev/null || echo '{}')
     fi
 
     # Audit
     _aud_json='{}'
-    if [ -f "$REPORT_DIR/metadata-audit.md" ]; then
-        _ao=$(awk -F'|' '/\| Orphaned \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        _aw=$(awk -F'|' '/\| Warnings \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        _ad=$(awk -F'|' '/\| Duplicates \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        _ai=$(awk -F'|' '/\| Issues \(errors\) \|/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        _au=$(awk -F'|' '/\| Upcoming/{gsub(/[^0-9]/,"",$3); print $3}' "$REPORT_DIR/metadata-audit.md" | head -1)
-        _pw=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Warnings/{gsub(/[^0-9]/,"",$3); print $3}')
-        _pi=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Issues/{gsub(/[^0-9]/,"",$3); print $3}')
-        _pd=$(awk '/Comparison/,0' "$REPORT_DIR/metadata-audit.md" | awk -F'|' '/Duplicates/{gsub(/[^0-9]/,"",$3); print $3}')
-        _aud_ts=$(stat -c '%Y' "$REPORT_DIR/metadata-audit.md")
-        _aud_json=$(jq -n --argjson o "${_ao:-0}" --argjson w "${_aw:-0}" --argjson d "${_ad:-0}" --argjson i "${_ai:-0}" --argjson u "${_au:-0}" --argjson pw "${_pw:-0}" --argjson pi "${_pi:-0}" --argjson pd "${_pd:-0}" --argjson ts "${_aud_ts:-0}" '{orphaned:$o,warnings:$w,duplicates:$d,issues:$i,upcoming:$u,prev_warnings:$pw,prev_issues:$pi,prev_duplicates:$pd,generated:$ts}')
+    if [ -f "$REPORT_DIR/metadata-audit.json" ]; then
+        _aud_ts=$(stat -c '%Y' "$REPORT_DIR/metadata-audit.json")
+        _aud_json=$(jq --argjson ts "${_aud_ts:-0}" '{
+            orphaned: .summary.orphaned,
+            warnings: .summary.warnings,
+            duplicates: .summary.duplicates,
+            issues: .summary.issues,
+            upcoming: .summary.upcoming,
+            prev_warnings: (.comparison.prev_warnings // 0),
+            prev_issues: (.comparison.prev_issues // 0),
+            prev_duplicates: (.comparison.prev_duplicates // 0),
+            generated: $ts
+        }' "$REPORT_DIR/metadata-audit.json" 2>/dev/null || echo '{}')
     fi
 
     # Breakdown
@@ -210,29 +209,27 @@ if cache_stale "$REPORTS_CACHE" 3600; then
     _cod_movies_json='[]'
     _tv_size=""
     _mov_size=""
-    if [ -f "$REPORT_DIR/storage-report.md" ]; then
-        # TV breakdown (first occurrence)
-        _res_json=$(awk '/^# TV Shows/,/^# Movies/' "$REPORT_DIR/storage-report.md" | awk '/^## Resolution Breakdown/,/^---$/' | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"resolution\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.' 2>/dev/null || echo '[]')
-        _cod_json=$(awk '/^# TV Shows/,/^# Movies/' "$REPORT_DIR/storage-report.md" | awk '/^## Codec Breakdown/,/^---$/' | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"codec\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.' 2>/dev/null || echo '[]')
-        # Movies breakdown (after "# Movies")
-        _res_movies_json=$(awk '/^# Movies/,0' "$REPORT_DIR/storage-report.md" | awk '/^## Resolution Breakdown/,/^---$/' | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"resolution\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.' 2>/dev/null || echo '[]')
-        _cod_movies_json=$(awk '/^# Movies/,0' "$REPORT_DIR/storage-report.md" | awk '/^## Codec Breakdown/,/^---$/' | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"codec\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.' 2>/dev/null || echo '[]')
-        # Fallback: if no "# TV Shows" header (old single-library format)
-        [ "$_res_json" = "[]" ] && _res_json=$(awk '/^## Resolution Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"resolution\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
-        [ "$_cod_json" = "[]" ] && _cod_json=$(awk '/^## Codec Breakdown/,/^---$/' "$REPORT_DIR/storage-report.md" | grep '^|' | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); gsub(/^ +| +$/,"",$4); if($2!="") printf "{\"codec\":\"%s\",\"folders\":\"%s\",\"size\":\"%s\"}\n",$2,$3,$4}' | jq -s '.')
-        # Total sizes for breakdown headers
-        _tv_size=$(awk '/^# TV Shows/,/^# Movies/' "$REPORT_DIR/storage-report.md" | grep "Total size" | awk -F'|' '{gsub(/^ +| +$/,"",$3); print $3}')
-        _mov_size=$(awk '/^# Movies/,0' "$REPORT_DIR/storage-report.md" | grep "Total size" | awk -F'|' '{gsub(/^ +| +$/,"",$3); print $3}')
-        [ -z "$_tv_size" ] && _tv_size=$(grep "Total size" "$REPORT_DIR/storage-report.md" | head -1 | awk -F'|' '{gsub(/^ +| +$/,"",$3); print $3}')
+    if [ -f "$REPORT_DIR/storage-report.json" ]; then
+        # TV breakdown (first library)
+        _res_json=$(jq '[.data.libraries[0].breakdowns.resolution[] | {resolution: .label, folders: (.folders | tostring), size: .size}]' "$REPORT_DIR/storage-report.json" 2>/dev/null || echo '[]')
+        _cod_json=$(jq '[.data.libraries[0].breakdowns.codec[] | {codec: .label, folders: (.folders | tostring), size: .size}]' "$REPORT_DIR/storage-report.json" 2>/dev/null || echo '[]')
+        # Movies breakdown (second library if exists)
+        _res_movies_json=$(jq '[.data.libraries[1].breakdowns.resolution[] | {resolution: .label, folders: (.folders | tostring), size: .size}]' "$REPORT_DIR/storage-report.json" 2>/dev/null || echo '[]')
+        _cod_movies_json=$(jq '[.data.libraries[1].breakdowns.codec[] | {codec: .label, folders: (.folders | tostring), size: .size}]' "$REPORT_DIR/storage-report.json" 2>/dev/null || echo '[]')
+        # Total sizes
+        _tv_size=$(jq -r '.data.libraries[0].breakdowns.resolution | [.[].size_bytes] | add | . as $b | if $b >= 1099511627776 then "\($b / 1099511627776 * 100 | floor / 100) TB" elif $b >= 1073741824 then "\($b / 1073741824 * 100 | floor / 100) GB" else "\($b / 1048576 | floor) MB" end' "$REPORT_DIR/storage-report.json" 2>/dev/null)
+        _mov_size=$(jq -r '.data.libraries[1].breakdowns.resolution | [.[].size_bytes] | add | . as $b | if $b >= 1099511627776 then "\($b / 1099511627776 * 100 | floor / 100) TB" elif $b >= 1073741824 then "\($b / 1073741824 * 100 | floor / 100) GB" else "\($b / 1048576 | floor) MB" end' "$REPORT_DIR/storage-report.json" 2>/dev/null)
+        # Simpler: use summary total_size if available (for single-library reports)
+        [ -z "$_tv_size" ] || [ "$_tv_size" = "null" ] && _tv_size=$(jq -r '.summary.total_size // empty' "$REPORT_DIR/storage-report.json" 2>/dev/null)
     fi
 
     # Report file timestamps
     _storage_ts=0
-    [ -f "$REPORT_DIR/storage-report.md" ] && _storage_ts=$(stat -c '%Y' "$REPORT_DIR/storage-report.md")
+    [ -f "$REPORT_DIR/storage-report.json" ] && _storage_ts=$(stat -c '%Y' "$REPORT_DIR/storage-report.json")
     _catalog_ts=0
-    [ -f "$REPORT_DIR/library-catalog.md" ] && _catalog_ts=$(stat -c '%Y' "$REPORT_DIR/library-catalog.md")
+    [ -f "$REPORT_DIR/library-catalog.json" ] && _catalog_ts=$(stat -c '%Y' "$REPORT_DIR/library-catalog.json")
 
-    # Write JSON caches (safe against single quotes)
+    # Write JSON caches
     echo "$_lib_json" > "$DATA_DIR/.library.json"
     echo "$_aud_json" > "$DATA_DIR/.audit.json"
     echo "$_res_json" > "$DATA_DIR/.breakdown-res-tv.json"
