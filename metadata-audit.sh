@@ -474,18 +474,20 @@ for warning in "${WARNINGS[@]}"; do
     case "$warning" in
         "Orphaned movie metadata:"*)
             entry="${warning#Orphaned movie metadata: }"
-            # Parse "Name (Year) (TMDb ID)" into structured object
             _name=$(echo "$entry" | sed 's/ (TMDb [0-9]*)$//')
             _year=$(echo "$_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
             _tmdb=$(echo "$entry" | grep -oP 'TMDb \K[0-9]+')
             _name_clean=$(echo "$_name" | sed 's/ ([0-9]\{4\})$//')
+            _url=""
+            [ -n "$_tmdb" ] && _url="https://www.themoviedb.org/movie/$_tmdb"
             ORPHANED_MOVIES_JSON=$(echo "$ORPHANED_MOVIES_JSON" | jq \
-                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" --arg source "movies.yml" --arg severity "warning" \
-                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "source": $source, "severity": $severity}]')
+                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" \
+                --arg source "movies.yml" --arg severity "warning" \
+                --arg action "Remove from movies.yml" --arg url "$_url" \
+                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "source": $source, "severity": $severity, "action": $action, "url": (if $url == "" then null else $url end)}]')
             ;;
         "Orphaned TV metadata:"*)
             entry="${warning#Orphaned TV metadata: }"
-            # Find source file for this TV entry
             _source="unknown"
             for _i in "${!TV_META_NAMES[@]}"; do
                 if [ "${TV_META_NAMES[$_i]}" = "$entry" ]; then
@@ -495,7 +497,8 @@ for warning in "${WARNINGS[@]}"; do
             done
             ORPHANED_TV_JSON=$(echo "$ORPHANED_TV_JSON" | jq \
                 --arg name "$entry" --arg source "$_source" --arg severity "warning" \
-                '. + [{"name": $name, "source": $source, "severity": $severity}]')
+                --arg action "Remove from $_source" \
+                '. + [{"name": $name, "source": $source, "severity": $severity, "action": $action}]')
             ;;
         "Upcoming movie metadata:"*)
             entry="${warning#Upcoming movie metadata: }"
@@ -503,9 +506,13 @@ for warning in "${WARNINGS[@]}"; do
             _year=$(echo "$_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
             _tmdb=$(echo "$entry" | grep -oP 'TMDb \K[0-9]+')
             _name_clean=$(echo "$_name" | sed 's/ ([0-9]\{4\})$//')
+            _url=""
+            [ -n "$_tmdb" ] && _url="https://www.themoviedb.org/movie/$_tmdb"
             UPCOMING_MOVIES_JSON=$(echo "$UPCOMING_MOVIES_JSON" | jq \
-                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" --arg source "movies.yml" --arg severity "info" \
-                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "source": $source, "severity": $severity}]')
+                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" \
+                --arg source "movies.yml" --arg severity "info" \
+                --arg action "Wait for release" --arg url "$_url" \
+                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "source": $source, "severity": $severity, "action": $action, "url": (if $url == "" then null else $url end)}]')
             ;;
         "Missing movie metadata:"*)
             entry="${warning#Missing movie metadata: }"
@@ -513,15 +520,19 @@ for warning in "${WARNINGS[@]}"; do
             _year=$(echo "$_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
             _tmdb=$(echo "$entry" | grep -oP 'TMDb \K[0-9]+')
             _name_clean=$(echo "$_name" | sed 's/ ([0-9]\{4\})$//')
+            _url=""
+            [ -n "$_tmdb" ] && _url="https://www.themoviedb.org/movie/$_tmdb"
             MISSING_MOVIES_JSON=$(echo "$MISSING_MOVIES_JSON" | jq \
-                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" --arg severity "warning" \
-                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "severity": $severity}]')
+                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" \
+                --arg severity "warning" --arg action "Add to movies.yml" --arg url "$_url" \
+                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "severity": $severity, "action": $action, "url": (if $url == "" then null else $url end)}]')
             ;;
         "Missing TV metadata:"*)
             entry="${warning#Missing TV metadata: }"
             MISSING_TV_JSON=$(echo "$MISSING_TV_JSON" | jq \
                 --arg name "$entry" --arg severity "warning" \
-                '. + [{"name": $name, "severity": $severity}]')
+                --arg action "Add to shows.yml or tv/*.yml" \
+                '. + [{"name": $name, "severity": $severity, "action": $action}]')
             ;;
         *"eps on disk"*|*"season folder missing"*|*"missing episodes"*)
             _severity="warning"
@@ -556,6 +567,24 @@ MOVIE_COVERAGE=0
 TV_COVERAGE=0
 [ "${#LIBRARY_MOVIE_IDS[@]}" -gt 0 ] && MOVIE_COVERAGE=$(awk "BEGIN {printf \"%.1f\", (${#LIBRARY_MOVIE_IDS[@]} - $MISSING_MOVIES) / ${#LIBRARY_MOVIE_IDS[@]} * 100}")
 [ "${#LIBRARY_TV_NAMES[@]}" -gt 0 ] && TV_COVERAGE=$(awk "BEGIN {printf \"%.1f\", (${#LIBRARY_TV_NAMES[@]} - $MISSING_TV) / ${#LIBRARY_TV_NAMES[@]} * 100}")
+
+# Last clean tracking — read from prev report, update if currently clean
+LAST_CLEAN="null"
+if [ -f "$REPORT_PREV" ]; then
+    LAST_CLEAN=$(jq -r '.data.last_clean // "null"' "$REPORT_PREV" 2>/dev/null)
+    [ "$LAST_CLEAN" = "null" ] || [ -z "$LAST_CLEAN" ] && LAST_CLEAN="null"
+fi
+if [ "$ISSUE_COUNT" -eq 0 ] && [ "$WARNING_COUNT" -eq 0 ]; then
+    LAST_CLEAN="\"$(date +%Y-%m-%d)\""
+fi
+
+# By-source breakdown — count orphaned entries per source file
+BY_SOURCE_JSON=$(echo "$ORPHANED_MOVIES_JSON" "$ORPHANED_TV_JSON" | jq -s '
+    (.[0] + .[1]) | group_by(.source) | map({
+        source: .[0].source,
+        orphaned: length
+    })
+')
 
 # Build comparison JSON
 COMPARISON_JSON="null"
@@ -629,6 +658,8 @@ jq -n \
     --argjson missing_movies "$MISSING_MOVIES_JSON" \
     --argjson missing_tv "$MISSING_TV_JSON" \
     --argjson season_issues "$SEASON_ISSUES_JSON" \
+    --argjson last_clean "$LAST_CLEAN" \
+    --argjson by_source "$BY_SOURCE_JSON" \
     --argjson comparison "$COMPARISON_JSON" \
     '{
         version: $version,
@@ -651,6 +682,8 @@ jq -n \
             tv_coverage_pct: $tv_coverage
         },
         data: {
+            last_clean: $last_clean,
+            by_source: $by_source,
             issues: $issues_list,
             orphaned: {
                 movies: $orphaned_movies,
