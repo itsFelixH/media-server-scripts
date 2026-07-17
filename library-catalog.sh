@@ -119,7 +119,8 @@ echo "  Found: $MOVIE_COUNT movies"
 # --- Build TV show list with season/episode counts ---
 echo "Scanning TV shows..."
 TV_TMP=$(mktemp)
-trap 'rm -f "$MOVIES_TMP" "$TV_TMP"' EXIT
+TV_SEASONS_TMP=$(mktemp)
+trap 'rm -f "$MOVIES_TMP" "$TV_TMP" "$TV_SEASONS_TMP"' EXIT
 
 TOTAL_SEASONS=0
 TOTAL_EPISODES=0
@@ -131,15 +132,21 @@ while IFS= read -r show_dir; do
     year=$(echo "$show_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
     display_name=$(echo "$show_name" | sed 's/ ([0-9]\{4\})$//')
 
-    # Count seasons and episodes
+    # Count seasons and episodes, collect per-season data
     season_count=0
     episode_count=0
 
     while IFS= read -r season_dir; do
         [ -d "$season_dir" ] || continue
+        season_name=$(basename "$season_dir")
+        # Extract season number
+        season_num=$(echo "$season_name" | grep -oP '[0-9]+' | head -1)
+        [ -z "$season_num" ] && season_num="0"
         eps=$(find "$season_dir" -maxdepth 1 -type f \( -iname "*.mkv" -o -iname "*.mp4" \) 2>/dev/null | wc -l)
         season_count=$((season_count + 1))
         episode_count=$((episode_count + eps))
+        # Record: show_name \t season_num \t episodes
+        printf '%s\t%s\t%s\n' "$display_name" "$season_num" "$eps" >> "$TV_SEASONS_TMP"
     done < <(find "$show_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
 
     # Get total size
@@ -167,7 +174,7 @@ MOVIES_JSON=$(jq -R -s '
         }
     )' < "$MOVIES_TMP")
 
-# Build TV shows JSON array (structured with name, year, seasons, episodes, size_bytes)
+# Build TV shows JSON array with season_list
 TV_JSON=$(jq -R -s '
     split("\n") | map(select(length > 0)) | map(
         split("\t") | {
@@ -178,6 +185,28 @@ TV_JSON=$(jq -R -s '
             size_bytes: (.[4] | tonumber)
         }
     )' < "$TV_TMP")
+
+# Build season_list per show from TV_SEASONS_TMP
+SEASON_LIST_JSON=$(jq -R -s '
+    split("\n") | map(select(length > 0)) | map(split("\t") | {show: .[0], season: (.[1] | tonumber), episodes: (.[2] | tonumber)}) |
+    group_by(.show) | map({key: .[0].show, value: (map({season: .season, episodes: .episodes}) | sort_by(.season))}) | from_entries
+' < "$TV_SEASONS_TMP")
+
+# Merge season_list into TV_JSON
+TV_JSON=$(echo "$TV_JSON" | jq --argjson sl "$SEASON_LIST_JSON" '
+    map(. + {season_list: ($sl[.name] // [])})
+')
+
+# Compute total_size_bytes (all movies + all shows)
+TOTAL_SIZE_BYTES=$(echo "$MOVIES_JSON" "$TV_JSON" | jq -s '
+    (.[0] | map(.size_bytes) | add // 0) + (.[1] | map(.size_bytes) | add // 0)
+')
+
+# Compute decade distribution
+DECADES_JSON=$(echo "$MOVIES_JSON" "$TV_JSON" | jq -s '
+    (.[0] + .[1]) | map(select(.year != null) | .year - (.year % 10)) |
+    group_by(.) | map({decade: (.[0] | tostring + "s"), count: length}) | sort_by(.decade)
+')
 
 # --- Added date tracking ---
 # Load existing added_dates from previous catalog (or empty)
@@ -215,8 +244,10 @@ jq -n \
     --argjson tv_count "$TV_COUNT" \
     --argjson total_seasons "$TOTAL_SEASONS" \
     --argjson total_episodes "$TOTAL_EPISODES" \
+    --argjson total_size_bytes "$TOTAL_SIZE_BYTES" \
     --argjson movies "$MOVIES_JSON" \
     --argjson shows "$TV_JSON" \
+    --argjson decades "$DECADES_JSON" \
     --argjson added_dates "$ADDED_DATES_JSON" \
     --argjson recent "$RECENT_JSON" \
     '{
@@ -230,11 +261,13 @@ jq -n \
             movies: $movie_count,
             tv_shows: $tv_count,
             seasons: $total_seasons,
-            episodes: $total_episodes
+            episodes: $total_episodes,
+            total_size_bytes: $total_size_bytes
         },
         data: {
             movies: $movies,
             shows: $shows,
+            decades: $decades,
             added_dates: $added_dates,
             recent: $recent
         },
