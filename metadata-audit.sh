@@ -164,13 +164,15 @@ echo "  Movie metadata entries: ${#MOVIE_META_IDS[@]}"
 
 TV_META_IDS=()
 TV_META_NAMES=()
+TV_META_SOURCES=()
 for yml in "$METADATA_DIR/shows.yml" "$METADATA_DIR/tv/"*.yml; do
     [ -f "$yml" ] || continue
+    yml_basename=$(basename "$yml")
     while read -r id; do
         TV_META_IDS+=("$id")
     done < <(get_metadata_ids "$yml")
     while read -r name; do
-        [ -n "$name" ] && TV_META_NAMES+=("$name")
+        [ -n "$name" ] && TV_META_NAMES+=("$name") && TV_META_SOURCES+=("$yml_basename")
     done < <(get_metadata_tv_names "$yml")
 done
 echo "  TV metadata entries: ${#TV_META_IDS[@]} (${#TV_META_NAMES[@]} names extracted)"
@@ -460,7 +462,7 @@ fi
 
 # --- 9. Generate JSON Report with Comparison ---
 
-# Build categorized warning arrays
+# Build categorized warning arrays as structured JSON
 ORPHANED_MOVIES_JSON="[]"
 ORPHANED_TV_JSON="[]"
 UPCOMING_MOVIES_JSON="[]"
@@ -472,42 +474,88 @@ for warning in "${WARNINGS[@]}"; do
     case "$warning" in
         "Orphaned movie metadata:"*)
             entry="${warning#Orphaned movie metadata: }"
-            ORPHANED_MOVIES_JSON=$(echo "$ORPHANED_MOVIES_JSON" | jq --arg e "$entry" '. + [$e]')
+            # Parse "Name (Year) (TMDb ID)" into structured object
+            _name=$(echo "$entry" | sed 's/ (TMDb [0-9]*)$//')
+            _year=$(echo "$_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
+            _tmdb=$(echo "$entry" | grep -oP 'TMDb \K[0-9]+')
+            _name_clean=$(echo "$_name" | sed 's/ ([0-9]\{4\})$//')
+            ORPHANED_MOVIES_JSON=$(echo "$ORPHANED_MOVIES_JSON" | jq \
+                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" --arg source "movies.yml" --arg severity "warning" \
+                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "source": $source, "severity": $severity}]')
             ;;
         "Orphaned TV metadata:"*)
             entry="${warning#Orphaned TV metadata: }"
-            ORPHANED_TV_JSON=$(echo "$ORPHANED_TV_JSON" | jq --arg e "$entry" '. + [$e]')
+            # Find source file for this TV entry
+            _source="unknown"
+            for _i in "${!TV_META_NAMES[@]}"; do
+                if [ "${TV_META_NAMES[$_i]}" = "$entry" ]; then
+                    _source="${TV_META_SOURCES[$_i]}"
+                    break
+                fi
+            done
+            ORPHANED_TV_JSON=$(echo "$ORPHANED_TV_JSON" | jq \
+                --arg name "$entry" --arg source "$_source" --arg severity "warning" \
+                '. + [{"name": $name, "source": $source, "severity": $severity}]')
             ;;
         "Upcoming movie metadata:"*)
             entry="${warning#Upcoming movie metadata: }"
-            UPCOMING_MOVIES_JSON=$(echo "$UPCOMING_MOVIES_JSON" | jq --arg e "$entry" '. + [$e]')
+            _name=$(echo "$entry" | sed 's/ (TMDb [0-9]*)$//')
+            _year=$(echo "$_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
+            _tmdb=$(echo "$entry" | grep -oP 'TMDb \K[0-9]+')
+            _name_clean=$(echo "$_name" | sed 's/ ([0-9]\{4\})$//')
+            UPCOMING_MOVIES_JSON=$(echo "$UPCOMING_MOVIES_JSON" | jq \
+                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" --arg source "movies.yml" --arg severity "info" \
+                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "source": $source, "severity": $severity}]')
             ;;
         "Missing movie metadata:"*)
             entry="${warning#Missing movie metadata: }"
-            MISSING_MOVIES_JSON=$(echo "$MISSING_MOVIES_JSON" | jq --arg e "$entry" '. + [$e]')
+            _name=$(echo "$entry" | sed 's/ (TMDb [0-9]*)$//')
+            _year=$(echo "$_name" | grep -oP '\((\d{4})\)' | tail -1 | tr -d '()')
+            _tmdb=$(echo "$entry" | grep -oP 'TMDb \K[0-9]+')
+            _name_clean=$(echo "$_name" | sed 's/ ([0-9]\{4\})$//')
+            MISSING_MOVIES_JSON=$(echo "$MISSING_MOVIES_JSON" | jq \
+                --arg name "$_name_clean" --argjson year "${_year:-null}" --arg tmdb_id "${_tmdb:-}" --arg severity "warning" \
+                '. + [{"name": $name, "year": (if $year == null then null else $year end), "tmdb_id": $tmdb_id, "severity": $severity}]')
             ;;
         "Missing TV metadata:"*)
             entry="${warning#Missing TV metadata: }"
-            MISSING_TV_JSON=$(echo "$MISSING_TV_JSON" | jq --arg e "$entry" '. + [$e]')
+            MISSING_TV_JSON=$(echo "$MISSING_TV_JSON" | jq \
+                --arg name "$entry" --arg severity "warning" \
+                '. + [{"name": $name, "severity": $severity}]')
             ;;
         *"eps on disk"*|*"season folder missing"*|*"missing episodes"*)
-            SEASON_ISSUES_JSON=$(echo "$SEASON_ISSUES_JSON" | jq --arg e "$warning" '. + [$e]')
+            _severity="warning"
+            [[ "$warning" == *"missing episodes"* ]] && _severity="error"
+            [[ "$warning" == *"season folder missing"* ]] && _severity="error"
+            SEASON_ISSUES_JSON=$(echo "$SEASON_ISSUES_JSON" | jq --arg e "$warning" --arg severity "$_severity" \
+                '. + [{"message": $e, "severity": $severity}]')
             ;;
     esac
 done
 
-# Build issues JSON
-ISSUES_JSON=$(printf '%s\n' "${ISSUES[@]}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
-[ -z "$ISSUES_JSON" ] && ISSUES_JSON="[]"
+# Build issues JSON (structured with severity)
+ISSUES_JSON="[]"
+for issue in "${ISSUES[@]}"; do
+    _severity="error"
+    ISSUES_JSON=$(echo "$ISSUES_JSON" | jq --arg e "$issue" --arg severity "$_severity" \
+        '. + [{"message": $e, "severity": $severity}]')
+done
 
-# Add season issues to the array
+# Add season issues from ISSUES array
 for issue in "${ISSUES[@]}"; do
     case "$issue" in
         *"season folder missing"*|*"missing episodes"*)
-            SEASON_ISSUES_JSON=$(echo "$SEASON_ISSUES_JSON" | jq --arg e "$issue" '. + [$e]')
+            SEASON_ISSUES_JSON=$(echo "$SEASON_ISSUES_JSON" | jq --arg e "$issue" --arg severity "error" \
+                '. + [{"message": $e, "severity": $severity}]')
             ;;
     esac
 done
+
+# Calculate coverage percentages
+MOVIE_COVERAGE=0
+TV_COVERAGE=0
+[ "${#LIBRARY_MOVIE_IDS[@]}" -gt 0 ] && MOVIE_COVERAGE=$(awk "BEGIN {printf \"%.1f\", (${#LIBRARY_MOVIE_IDS[@]} - $MISSING_MOVIES) / ${#LIBRARY_MOVIE_IDS[@]} * 100}")
+[ "${#LIBRARY_TV_NAMES[@]}" -gt 0 ] && TV_COVERAGE=$(awk "BEGIN {printf \"%.1f\", (${#LIBRARY_TV_NAMES[@]} - $MISSING_TV) / ${#LIBRARY_TV_NAMES[@]} * 100}")
 
 # Build comparison JSON
 COMPARISON_JSON="null"
@@ -542,12 +590,27 @@ if [ -f "$REPORT_PREV" ]; then
         }')
 fi
 
+# Determine health status
+if [ "$ISSUE_COUNT" -gt 0 ]; then
+    HEALTH_STATUS="error"
+    HEALTH_MSG="$ISSUE_COUNT issue(s) require attention"
+elif [ "$WARNING_COUNT" -gt 50 ]; then
+    HEALTH_STATUS="warning"
+    HEALTH_MSG="$WARNING_COUNT warnings"
+else
+    HEALTH_STATUS="ok"
+    HEALTH_MSG="All metadata valid"
+fi
+
 # Write final JSON report
 jq -n \
     --argjson version 1 \
     --arg type "metadata-audit" \
     --arg generated "$(date -Iseconds)" \
+    --arg generated_by "$SCRIPT_NAME" \
     --argjson duration "$DURATION" \
+    --arg health_status "$HEALTH_STATUS" \
+    --arg health_msg "$HEALTH_MSG" \
     --argjson movies_on_disk "${#LIBRARY_MOVIE_IDS[@]}" \
     --argjson tv_on_disk "${#LIBRARY_TV_NAMES[@]}" \
     --argjson movie_metadata "${#MOVIE_META_IDS[@]}" \
@@ -557,6 +620,8 @@ jq -n \
     --argjson orphaned "$((ORPHANED_MOVIES + ORPHANED_TV))" \
     --argjson upcoming "$UPCOMING_MOVIES" \
     --argjson duplicates "$((DUPE_MOVIE_COUNT + DUPE_TV_COUNT))" \
+    --argjson movie_coverage "$MOVIE_COVERAGE" \
+    --argjson tv_coverage "$TV_COVERAGE" \
     --argjson issues_list "$ISSUES_JSON" \
     --argjson orphaned_movies "$ORPHANED_MOVIES_JSON" \
     --argjson orphaned_tv "$ORPHANED_TV_JSON" \
@@ -569,7 +634,9 @@ jq -n \
         version: $version,
         type: $type,
         generated: $generated,
+        generated_by: $generated_by,
         duration_seconds: $duration,
+        health: {status: $health_status, message: $health_msg},
         summary: {
             movies_on_disk: $movies_on_disk,
             tv_on_disk: $tv_on_disk,
@@ -579,7 +646,9 @@ jq -n \
             warnings: $warnings,
             orphaned: $orphaned,
             upcoming: $upcoming,
-            duplicates: $duplicates
+            duplicates: $duplicates,
+            movie_coverage_pct: $movie_coverage,
+            tv_coverage_pct: $tv_coverage
         },
         data: {
             issues: $issues_list,
