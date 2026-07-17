@@ -2,7 +2,7 @@
 # Storage Report
 # Scans media directories and generates a detailed storage report.
 # Reports folder sizes, resolution, codec, and file counts.
-# Generates a markdown report, diffs against previous run, posts summary to Discord.
+# Generates a JSON report, diffs against previous run, posts summary to Discord.
 #
 # Usage:
 #   ./storage-report.sh [options] [directory]
@@ -39,8 +39,8 @@ Options:
 Defaults to /mnt/Media/TV Shows if no directory is specified.
 Auto-detects TV (show/season) vs Movies (flat) structure.
 
-Output: ~/kometa/scripts/logs/storage-report.md (overwritten each run)
-Previous snapshot saved as storage-report.prev.md for diffing.
+Output: ~/kometa/scripts/reports/storage-report.json (overwritten each run)
+Previous snapshot saved as storage-report.prev.json for diffing.
 HELP
 }
 
@@ -63,8 +63,8 @@ SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
 
 LOG_FILE="$LOG_DIR/storage-report/storage-report_$(date +%Y%m%d_%H%M%S).log"
-REPORT_FILE="$REPORT_DIR/storage-report.md"
-REPORT_PREV="$REPORT_DIR/storage-report.prev.md"
+REPORT_FILE="$REPORT_DIR/storage-report.json"
+REPORT_PREV="$REPORT_DIR/storage-report.prev.json"
 mkdir -p "$LOG_DIR/storage-report"
 BASE_PATH="${POSITIONAL[0]:-}"
 
@@ -76,29 +76,44 @@ if [ -z "$BASE_PATH" ]; then
     [ "$NO_DISCORD" = true ] && SELF_ARGS="$SELF_ARGS --no-discord"
     # Run self for TV Shows
     bash "$0" $SELF_ARGS "$TV_DIR"
-    [ -f "$REPORT_FILE" ] && mv "$REPORT_FILE" "$REPORT_DIR/storage-report-tv.md"
+    [ -f "$REPORT_FILE" ] && mv "$REPORT_FILE" "$REPORT_DIR/storage-report-tv.json"
     # Run self for Movies
     bash "$0" $SELF_ARGS "$MOVIES_DIR"
-    [ -f "$REPORT_FILE" ] && mv "$REPORT_FILE" "$REPORT_DIR/storage-report-movies.md"
-    # Combine into one report
-    {
-        echo "# 📊 Storage Report"
-        echo ""
-        echo "**Generated:** $(date '+%Y-%m-%d %H:%M:%S')"
-        echo ""
-        echo "---"
-        echo ""
-        echo "# TV Shows"
-        echo ""
-        sed -n '/^## Summary/,$ p' "$REPORT_DIR/storage-report-tv.md" 2>/dev/null
-        echo ""
-        echo "---"
-        echo ""
-        echo "# Movies"
-        echo ""
-        sed -n '/^## Summary/,$ p' "$REPORT_DIR/storage-report-movies.md" 2>/dev/null
-    } > "$REPORT_FILE"
-    rm -f "$REPORT_DIR/storage-report-tv.md" "$REPORT_DIR/storage-report-movies.md"
+    [ -f "$REPORT_FILE" ] && mv "$REPORT_FILE" "$REPORT_DIR/storage-report-movies.json"
+    # Combine into one report with root totals
+    jq -n \
+        --slurpfile tv "$REPORT_DIR/storage-report-tv.json" \
+        --slurpfile movies "$REPORT_DIR/storage-report-movies.json" \
+        '
+        def format_bytes:
+            if . >= 1099511627776 then "\(. / 1099511627776 * 100 | floor / 100) TB"
+            elif . >= 1073741824 then "\(. / 1073741824 * 100 | floor / 100) GB"
+            elif . >= 1048576 then "\(. / 1048576 | floor) MB"
+            else "\(. / 1024 | floor) KB"
+            end;
+        ($tv[0].data.libraries[0]) as $t |
+        ($movies[0].data.libraries[0]) as $m |
+        ($tv[0].summary.total_size_bytes + $movies[0].summary.total_size_bytes) as $total_bytes |
+        ($tv[0].summary.total_files + $movies[0].summary.total_files) as $total_files |
+        ($tv[0].summary.folders_scanned + $movies[0].summary.folders_scanned) as $total_folders |
+        ($tv[0].duration_seconds + $movies[0].duration_seconds) as $total_duration |
+        {
+            version: 1,
+            type: "storage-report",
+            generated: (now | strftime("%Y-%m-%dT%H:%M:%S+02:00")),
+            duration_seconds: $total_duration,
+            summary: {
+                total_size_bytes: $total_bytes,
+                total_size: ($total_bytes | format_bytes),
+                total_files: $total_files,
+                folders_scanned: $total_folders
+            },
+            data: {
+                libraries: [$t, $m]
+            },
+            comparison: null
+        }' > "$REPORT_FILE"
+    rm -f "$REPORT_DIR/storage-report-tv.json" "$REPORT_DIR/storage-report-movies.json"
     exit 0
 fi
 
@@ -206,7 +221,7 @@ if [ ! -d "$BASE_PATH" ]; then
     echo "ERROR: Directory not found: $BASE_PATH"
     discord_notify "error" "❌ Storage Report Failed" "Directory not found: \`$BASE_PATH\`
 
-See \`reports/storage-report.md\` for last successful run."
+See \`reports/storage-report.json\` for last successful run."
     exit 1
 fi
 
@@ -377,119 +392,161 @@ echo
 echo "Log saved to: $LOG_FILE"
 echo "Report saved to: $REPORT_FILE"
 
-# --- Generate Markdown Report ---
+# --- Generate JSON Report ---
 
 # Backup previous report for diffing
 if [ -f "$REPORT_FILE" ]; then
     cp "$REPORT_FILE" "$REPORT_PREV"
 fi
 
-{
-    echo "# 📊 Storage Report"
-    echo ""
-    echo "**Generated:** $(date '+%Y-%m-%d %H:%M:%S')"
-    echo ""
-    echo "---"
-    echo ""
-    echo "## Summary"
-    echo ""
-    echo "| Metric | Value |"
-    echo "|--------|-------|"
-    echo "| Directory | \`$(basename "$BASE_PATH")\` |"
-    echo "| Mode | $SCAN_MODE |"
-    echo "| Folders scanned | $FOLDER_COUNT |"
-    echo "| Total files | $TOTAL_FILES |"
-    echo "| Total size | $TOTAL_HUMAN |"
-    echo "| Duration | ${DURATION}s |"
-    echo ""
-    echo "---"
-    echo ""
-    echo "## Resolution Breakdown"
-    echo ""
-    echo "| Resolution | Folders | Size |"
-    echo "|------------|---------|------|"
-    for bucket in "4K" "FHD" "HD" "SD" "Unknown" "Other"; do
-        count=${RES_COUNTS[$bucket]:-0}
-        [ "$count" -eq 0 ] && continue
-        size=$(format_size "${RES_SIZES[$bucket]:-0}")
-        echo "| $bucket | $count | $size |"
-    done
-    echo ""
-    echo "---"
-    echo ""
-    echo "## Codec Breakdown"
-    echo ""
-    echo "| Codec | Folders | Size |"
-    echo "|-------|---------|------|"
-    for codec in "HEVC" "H264" "AV1" "Unknown"; do
-        count=${CODEC_COUNTS[$codec]:-0}
-        [ "$count" -eq 0 ] && continue
-        size=$(format_size "${CODEC_SIZES[$codec]:-0}")
-        echo "| $codec | $count | $size |"
-    done
-    for codec in "${!CODEC_COUNTS[@]}"; do
-        case "$codec" in HEVC|H264|AV1|Unknown) continue ;; esac
-        count=${CODEC_COUNTS[$codec]}
-        size=$(format_size "${CODEC_SIZES[$codec]:-0}")
-        echo "| $codec | $count | $size |"
-    done
-    echo ""
-    echo "---"
-    echo ""
-    echo "## All Folders"
-    echo ""
-    echo "| Name | Resolution | Codec | Size | Files |"
-    echo "|------|------------|-------|------|-------|"
-    sort -t$'\t' -k1 "$TMP_FILE" | while IFS=$'\t' read -r name resolution codec size_bytes file_count; do
-        size_human=$(format_size "$size_bytes")
-        echo "| $name | $resolution | $codec | $size_human | $file_count |"
-    done
-    echo ""
+# Build resolution breakdown JSON (with human-readable sizes)
+RES_JSON="[]"
+for bucket in "4K" "FHD" "HD" "SD" "Unknown" "Other"; do
+    count=${RES_COUNTS[$bucket]:-0}
+    [ "$count" -eq 0 ] && continue
+    size_bytes=${RES_SIZES[$bucket]:-0}
+    size_human=$(format_size "$size_bytes")
+    RES_JSON=$(echo "$RES_JSON" | jq --arg label "$bucket" --argjson folders "$count" --argjson size_bytes "$size_bytes" --arg size "$size_human" \
+        '. + [{"label": $label, "folders": $folders, "size_bytes": $size_bytes, "size": $size}]')
+done
 
-    # Comparison with previous report
-    if [ -f "$REPORT_PREV" ]; then
-        echo "---"
-        echo ""
-        echo "## Comparison with Previous Run"
-        echo ""
+# Build codec breakdown JSON (with human-readable sizes)
+CODEC_JSON="[]"
+for codec in "HEVC" "H264" "AV1" "Unknown"; do
+    count=${CODEC_COUNTS[$codec]:-0}
+    [ "$count" -eq 0 ] && continue
+    size_bytes=${CODEC_SIZES[$codec]:-0}
+    size_human=$(format_size "$size_bytes")
+    CODEC_JSON=$(echo "$CODEC_JSON" | jq --arg label "$codec" --argjson folders "$count" --argjson size_bytes "$size_bytes" --arg size "$size_human" \
+        '. + [{"label": $label, "folders": $folders, "size_bytes": $size_bytes, "size": $size}]')
+done
+for codec in "${!CODEC_COUNTS[@]}"; do
+    case "$codec" in HEVC|H264|AV1|Unknown) continue ;; esac
+    count=${CODEC_COUNTS[$codec]}
+    size_bytes=${CODEC_SIZES[$codec]:-0}
+    size_human=$(format_size "$size_bytes")
+    CODEC_JSON=$(echo "$CODEC_JSON" | jq --arg label "$codec" --argjson folders "$count" --argjson size_bytes "$size_bytes" --arg size "$size_human" \
+        '. + [{"label": $label, "folders": $folders, "size_bytes": $size_bytes, "size": $size}]')
+done
 
-        PREV_FOLDERS=$(grep -oP 'Folders scanned \| \K[0-9]+' "$REPORT_PREV" | head -1 || echo "0")
-        PREV_FILES=$(grep -oP 'Total files \| \K[0-9]+' "$REPORT_PREV" | head -1 || echo "0")
-        PREV_SIZE=$(grep -oP 'Total size \| \K[^\|]+' "$REPORT_PREV" | head -1 | sed 's/ *$//' || echo "N/A")
-
-        [ -z "$PREV_FOLDERS" ] && PREV_FOLDERS=0
-        [ -z "$PREV_FILES" ] && PREV_FILES=0
-
-        FOLDERS_CHANGE=$((FOLDER_COUNT - PREV_FOLDERS))
-        FILES_CHANGE=$((TOTAL_FILES - PREV_FILES))
-
-        format_change() {
-            local change=$1
-            if [ "$change" -gt 0 ]; then echo "**+${change}** ⬆️"
-            elif [ "$change" -lt 0 ]; then echo "**${change}** ⬇️"
-            else echo "No change ➡️"
+# Resolution bucket helper for items
+resolve_bucket() {
+    local resolution="$1"
+    local height="${resolution%p}"
+    case "$resolution" in
+        2160p) echo "4K" ;;
+        1080p) echo "FHD" ;;
+        720p)  echo "HD" ;;
+        480p|360p|240p) echo "SD" ;;
+        N/A)   echo "Unknown" ;;
+        *)
+            if [ "$height" -ge 2160 ] 2>/dev/null; then echo "4K"
+            elif [ "$height" -ge 1080 ] 2>/dev/null; then echo "FHD"
+            elif [ "$height" -ge 720 ] 2>/dev/null; then echo "HD"
+            elif [ "$height" -ge 1 ] 2>/dev/null; then echo "SD"
+            else echo "Unknown"
             fi
+            ;;
+    esac
+}
+
+# Build items array from TMP_FILE (with resolution_bucket and human size)
+ITEMS_JSON=$(sort -t$'\t' -k1 "$TMP_FILE" | while IFS=$'\t' read -r name resolution codec size_bytes file_count; do
+    bucket=$(resolve_bucket "$resolution")
+    size_human=$(format_size "$size_bytes")
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$resolution" "$bucket" "$codec" "$size_bytes" "$size_human" "$file_count"
+done | jq -R -s '
+    split("\n") | map(select(length > 0)) | map(
+        split("\t") | {
+            name: .[0],
+            resolution: .[1],
+            resolution_bucket: .[2],
+            codec: .[3],
+            size_bytes: (.[4] | tonumber),
+            size: .[5],
+            files: (.[6] | tonumber)
         }
+    )')
 
-        echo "| Metric | Previous | Current | Change |"
-        echo "|--------|----------|---------|--------|"
-        echo "| Folders | $PREV_FOLDERS | $FOLDER_COUNT | $(format_change "$FOLDERS_CHANGE") |"
-        echo "| Files | $PREV_FILES | $TOTAL_FILES | $(format_change "$FILES_CHANGE") |"
-        echo "| Size | $PREV_SIZE | $TOTAL_HUMAN | — |"
-        echo ""
+# Build top_by_size (top 10 largest items)
+TOP_JSON=$(echo "$ITEMS_JSON" | jq '[sort_by(-.size_bytes) | limit(10; .[])]')
 
-        if [ "$FILES_CHANGE" -gt 0 ]; then
-            echo "📈 **Storage grew by $FILES_CHANGE file(s) since last run.**"
-            echo ""
-        elif [ "$FILES_CHANGE" -lt 0 ]; then
-            echo "📉 **Storage shrank by ${FILES_CHANGE#-} file(s) since last run.**"
-            echo ""
-        else
-            echo "No changes since last run."
-            echo ""
-        fi
-    fi
-} > "$REPORT_FILE"
+# Build comparison JSON
+COMPARISON_JSON="null"
+if [ -f "$REPORT_PREV" ]; then
+    PREV_FOLDERS=$(jq -r '.summary.folders_scanned // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
+    PREV_FILES=$(jq -r '.summary.total_files // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
+    PREV_SIZE=$(jq -r '.summary.total_size_bytes // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
+
+    [ -z "$PREV_FOLDERS" ] || [ "$PREV_FOLDERS" = "null" ] && PREV_FOLDERS=0
+    [ -z "$PREV_FILES" ] || [ "$PREV_FILES" = "null" ] && PREV_FILES=0
+    [ -z "$PREV_SIZE" ] || [ "$PREV_SIZE" = "null" ] && PREV_SIZE=0
+
+    FOLDERS_CHANGE=$((FOLDER_COUNT - PREV_FOLDERS))
+    FILES_CHANGE=$((TOTAL_FILES - PREV_FILES))
+    SIZE_CHANGE=$((TOTAL_BYTES - PREV_SIZE))
+
+    COMPARISON_JSON=$(jq -n \
+        --argjson prev_folders "$PREV_FOLDERS" \
+        --argjson prev_files "$PREV_FILES" \
+        --argjson prev_size_bytes "$PREV_SIZE" \
+        --argjson folders_change "$FOLDERS_CHANGE" \
+        --argjson files_change "$FILES_CHANGE" \
+        --argjson size_change "$SIZE_CHANGE" \
+        --arg size_change_human "$(format_size "${SIZE_CHANGE#-}")" \
+        '{
+            prev_folders: $prev_folders,
+            prev_files: $prev_files,
+            prev_size_bytes: $prev_size_bytes,
+            folders_change: $folders_change,
+            files_change: $files_change,
+            size_change: $size_change,
+            size_change_human: $size_change_human
+        }')
+fi
+
+# Write final JSON report
+jq -n \
+    --argjson version 1 \
+    --arg type "storage-report" \
+    --arg generated "$(date -Iseconds)" \
+    --argjson duration "$DURATION" \
+    --arg directory "$(basename "$BASE_PATH")" \
+    --arg mode "$SCAN_MODE" \
+    --argjson folders_scanned "$FOLDER_COUNT" \
+    --argjson total_files "$TOTAL_FILES" \
+    --argjson total_size_bytes "$TOTAL_BYTES" \
+    --arg total_size "$(format_size "$TOTAL_BYTES")" \
+    --argjson resolution "$RES_JSON" \
+    --argjson codec "$CODEC_JSON" \
+    --argjson items "$ITEMS_JSON" \
+    --argjson top_by_size "$TOP_JSON" \
+    --argjson comparison "$COMPARISON_JSON" \
+    '{
+        version: $version,
+        type: $type,
+        generated: $generated,
+        duration_seconds: $duration,
+        summary: {
+            total_size_bytes: $total_size_bytes,
+            total_size: $total_size,
+            total_files: $total_files,
+            folders_scanned: $folders_scanned
+        },
+        data: {
+            libraries: [{
+                directory: $directory,
+                mode: $mode,
+                breakdowns: {
+                    resolution: $resolution,
+                    codec: $codec
+                },
+                top_by_size: $top_by_size,
+                items: $items
+            }]
+        },
+        comparison: $comparison
+    }' > "$REPORT_FILE"
 
 # --- Discord Notification ---
 # Build resolution summary for Discord
