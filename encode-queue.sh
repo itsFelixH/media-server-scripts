@@ -228,28 +228,33 @@ done < "$PROBE_CACHE"
 
 # Sort by size descending and limit
 QUEUE=$(sort -t$'\t' -k2 -rn "$TMP_FILE" | head -"$LIMIT")
-QUEUE_COUNT=$(echo "$QUEUE" | grep -c . 2>/dev/null || echo 0)
+QUEUE_COUNT=0
+[ -n "$QUEUE" ] && QUEUE_COUNT=$(echo "$QUEUE" | wc -l | tr -d ' ')
 
 # Calculate totals using awk to avoid integer overflow
 TOTAL_NON_HEVC_BYTES=$(awk -F'\t' '{sum += $2} END {printf "%.0f", sum+0}' "$TMP_FILE" 2>/dev/null)
 ESTIMATED_SAVINGS=$(awk -F'\t' -v ratio="$HEVC_RATIO" '{sum += $2} END {printf "%.0f", sum * (100 - ratio) / 100}' "$TMP_FILE" 2>/dev/null)
 
 # Savings by codec breakdown
-SAVINGS_BY_CODEC_JSON=$(awk -F'\t' -v ratio="$HEVC_RATIO" '{
-    codec[$3] += $2
-} END {
-    for (c in codec) {
-        savings = codec[c] * (100 - ratio) / 100
-        printf "%s\t%.0f\t%.0f\n", c, codec[c], savings
-    }
-}' "$TMP_FILE" | sort -t$'\t' -k2 -rn | jq -R -s '
-    split("\n") | map(select(length > 0)) | map(
-        split("\t") | {
-            codec: .[0],
-            size_bytes: (.[1] | tonumber),
-            savings_bytes: (.[2] | tonumber)
+if [ -s "$TMP_FILE" ]; then
+    SAVINGS_BY_CODEC_JSON=$(awk -F'\t' -v ratio="$HEVC_RATIO" '{
+        codec[$3] += $2
+    } END {
+        for (c in codec) {
+            savings = codec[c] * (100 - ratio) / 100
+            printf "%s\t%.0f\t%.0f\n", c, codec[c], savings
         }
-    )')
+    }' "$TMP_FILE" | sort -t$'\t' -k2 -rn | jq -R -s '
+        split("\n") | map(select(length > 0)) | map(
+            split("\t") | {
+                codec: .[0],
+                size_bytes: (.[1] | tonumber),
+                savings_bytes: (.[2] | tonumber)
+            }
+        )')
+else
+    SAVINGS_BY_CODEC_JSON="[]"
+fi
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
@@ -264,15 +269,17 @@ echo "Duration: ${DURATION}s"
 echo
 echo "Queue (top $QUEUE_COUNT by size):"
 echo "---"
-RANK=0
-while IFS=$'\t' read -r rel_path size_bytes codec resolution hdr full_path; do
-    RANK=$((RANK + 1))
-    size_h=$(format_size "$size_bytes")
-    est_saved=$(format_size $((size_bytes * (100 - HEVC_RATIO) / 100)))
-    hdr_tag=""
-    [ "$hdr" = "true" ] && hdr_tag=" [HDR]"
-    printf "%3d. %-50s %8s  %-5s  %s%s  (save ~%s)\n" "$RANK" "$rel_path" "$size_h" "$codec" "$resolution" "$hdr_tag" "$est_saved"
-done <<< "$QUEUE"
+if [ -n "$QUEUE" ]; then
+    RANK=0
+    while IFS=$'\t' read -r rel_path size_bytes codec resolution hdr full_path; do
+        RANK=$((RANK + 1))
+        size_h=$(format_size "$size_bytes")
+        est_saved=$(format_size $((size_bytes * (100 - HEVC_RATIO) / 100)))
+        hdr_tag=""
+        [ "$hdr" = "true" ] && hdr_tag=" [HDR]"
+        printf "%3d. %-50s %8s  %-5s  %s%s  (save ~%s)\n" "$RANK" "$rel_path" "$size_h" "$codec" "$resolution" "$hdr_tag" "$est_saved"
+    done <<< "$QUEUE"
+fi
 echo "---"
 echo
 
@@ -460,14 +467,19 @@ echo "Report saved to: $REPORT_FILE"
 echo "Log saved to: $LOG_FILE"
 
 # Discord notification
-TOP_FILES=$(echo "$QUEUE" | head -5 | while IFS=$'\t' read -r rel_path size_bytes codec resolution hdr full_path; do
-    name=$(echo "$rel_path" | cut -d'/' -f1)
-    size_h=$(format_size "$size_bytes")
-    est_saved=$(format_size $((size_bytes * (100 - HEVC_RATIO) / 100)))
-    printf "%s · %s · save ~%s\n" "$name" "$size_h" "$est_saved"
-done)
+TOP_FILES=""
+if [ -n "$QUEUE" ]; then
+    TOP_FILES=$(echo "$QUEUE" | head -5 | while IFS=$'\t' read -r rel_path size_bytes codec resolution hdr full_path; do
+        [ -z "$size_bytes" ] && continue
+        name=$(echo "$rel_path" | cut -d'/' -f1)
+        size_h=$(format_size "$size_bytes")
+        est_saved=$(format_size $((size_bytes * (100 - HEVC_RATIO) / 100)))
+        printf "%s · %s · save ~%s\n" "$name" "$size_h" "$est_saved"
+    done)
+fi
 
-SAVINGS_PCT=$(( (ESTIMATED_SAVINGS * 100) / (TOTAL_NON_HEVC_BYTES > 0 ? TOTAL_NON_HEVC_BYTES : 1) ))
+SAVINGS_PCT=0
+[ "${TOTAL_NON_HEVC_BYTES:-0}" -gt 0 ] && SAVINGS_PCT=$(( (ESTIMATED_SAVINGS * 100) / TOTAL_NON_HEVC_BYTES ))
 DISCORD_DESC="**$NON_HEVC_COUNT** files · $(format_size "${TOTAL_NON_HEVC_BYTES:-0}") → save ~$(format_size "${ESTIMATED_SAVINGS:-0}") (${SAVINGS_PCT}%)
 \`\`\`
 $TOP_FILES
