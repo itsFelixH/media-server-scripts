@@ -58,6 +58,7 @@ bash healthcheck.sh
 | `metadata-audit.sh` | Validate metadata files against library | Sundays 02:00 |
 | `encode-queue.sh` | Find re-encoding candidates | 1st of month |
 | `storage-report.sh` | Disk usage breakdown by folder/codec/resolution (both libraries) | 28th of month |
+| `plex-vs-arrs.sh` | Compare Plex library against Radarr/Sonarr | Sundays 02:30 |
 | `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
 | `runkometa.sh` | Interactive Kometa runner with library/mode selection | Manual |
 
@@ -321,6 +322,33 @@ Scans a media directory and generates a detailed storage report. Auto-detects TV
 </details>
 
 <details>
+<summary><strong>plex-vs-arrs.sh</strong> — compare Plex library against Radarr/Sonarr</summary>
+
+Compares Plex library content against Radarr (movies) and Sonarr (TV shows) via their APIs. Finds items that exist in one system but not the other, detects duplicates, and performs fuzzy title matching for items with mismatched IDs.
+
+#### Config keys used
+
+`plex.*`, `api_keys.radarr`, `api_keys.sonarr`
+
+#### Output
+
+- Report: `reports/plex-vs-arrs.json` (overwritten each run)
+
+#### What it checks
+
+- Movies in Plex but not in Radarr (and vice versa)
+- TV Shows in Plex but not in Sonarr (and vice versa)
+- Fuzzy title matching for different IDs pointing to the same content
+- Duplicate entries (same TMDb/TVDb ID appearing multiple times in Plex)
+- Items without usable IDs
+
+#### Dependencies
+
+`jq`, `curl`
+
+</details>
+
+<details>
 <summary><strong>media-analyzer.sh</strong> — filter/analyze video files</summary>
 
 Scans video files, probes each for codec and resolution, filters by mode. Supports scanning multiple directories.
@@ -388,6 +416,9 @@ Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa
 
 # Metadata audit (Sundays 02:00)
 0 2 * * 0 bash ~/kometa/scripts/metadata-audit.sh --quiet
+
+# Plex vs ARRs comparison (Sundays 02:30)
+30 2 * * 0 bash ~/kometa/scripts/plex-vs-arrs.sh --quiet
 
 # Scheduled maintenance (Mondays 03:00)
 0 3 * * 1 bash ~/kometa/scripts/maintenance.sh --scheduled
