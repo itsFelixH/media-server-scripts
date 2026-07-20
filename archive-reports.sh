@@ -114,7 +114,7 @@ while IFS= read -r -d '' file; do
     cp "$file" "$dest_file" 2>/dev/null
     ((REPORT_COUNT++))
     echo "  [+] $base_name ($report_date)"
-done < <(find "$REPORT_DIR" -maxdepth 1 \( -name "*.md" -o -name "*.json" \) ! -name "*.prev.*" ! -name "system-status.json" -type f -print0)
+done < <(find "$REPORT_DIR" -maxdepth 1 \( -name "*.md" -o -name "*.json" \) ! -name "*.prev.*" ! -name "*.baseline.*" ! -name "system-status.json" -type f -print0)
 
 if [ "$REPORT_COUNT" -gt 0 ]; then
     echo "[✓] Reports archived: $REPORT_COUNT new, $REPORT_SKIPPED unchanged (skipped)"

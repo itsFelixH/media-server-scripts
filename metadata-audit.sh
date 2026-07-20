@@ -51,7 +51,7 @@ source "$SCRIPTS_DIR/config.sh"
 TIMESTAMP=$(date +%Y-%m-%d)
 LOG_FILE="$LOG_DIR/metadata-audit/metadata-audit_${TIMESTAMP}.log"
 REPORT_FILE="$REPORT_DIR/metadata-audit.json"
-REPORT_PREV="$REPORT_DIR/metadata-audit.prev.json"
+BASELINE_FILE="$REPORT_DIR/metadata-audit.baseline.json"
 mkdir -p "$LOG_DIR/metadata-audit"
 
 # Log function - writes to both terminal and log file
@@ -455,9 +455,16 @@ fi
 echo "Log saved to: $LOG_FILE"
 echo "Report saved to: $REPORT_FILE"
 
-# Backup previous report
-if [ -f "$REPORT_FILE" ]; then
-    cp "$REPORT_FILE" "$REPORT_PREV"
+# Update weekly baseline (only if older than 7 days or doesn't exist)
+BASELINE_STALE=false
+if [ ! -f "$BASELINE_FILE" ]; then
+    BASELINE_STALE=true
+elif [ -f "$BASELINE_FILE" ]; then
+    _baseline_age=$(( $(date +%s) - $(stat -c %Y "$BASELINE_FILE") ))
+    [ "$_baseline_age" -gt 604800 ] && BASELINE_STALE=true
+fi
+if [ "$BASELINE_STALE" = true ] && [ -f "$REPORT_FILE" ]; then
+    cp "$REPORT_FILE" "$BASELINE_FILE"
 fi
 
 # --- 9. Generate JSON Report with Comparison ---
@@ -568,10 +575,13 @@ TV_COVERAGE=0
 [ "${#LIBRARY_MOVIE_IDS[@]}" -gt 0 ] && MOVIE_COVERAGE=$(awk "BEGIN {printf \"%.1f\", (${#LIBRARY_MOVIE_IDS[@]} - $MISSING_MOVIES) / ${#LIBRARY_MOVIE_IDS[@]} * 100}")
 [ "${#LIBRARY_TV_NAMES[@]}" -gt 0 ] && TV_COVERAGE=$(awk "BEGIN {printf \"%.1f\", (${#LIBRARY_TV_NAMES[@]} - $MISSING_TV) / ${#LIBRARY_TV_NAMES[@]} * 100}")
 
-# Last clean tracking — read from prev report, update if currently clean
+# Last clean tracking — read from current report (persists across runs), fall back to baseline
 LAST_CLEAN="null"
-if [ -f "$REPORT_PREV" ]; then
-    LAST_CLEAN=$(jq '.data.last_clean // null' "$REPORT_PREV" 2>/dev/null)
+if [ -f "$REPORT_FILE" ]; then
+    LAST_CLEAN=$(jq '.data.last_clean // null' "$REPORT_FILE" 2>/dev/null)
+    [ -z "$LAST_CLEAN" ] && LAST_CLEAN="null"
+elif [ -f "$BASELINE_FILE" ]; then
+    LAST_CLEAN=$(jq '.data.last_clean // null' "$BASELINE_FILE" 2>/dev/null)
     [ -z "$LAST_CLEAN" ] && LAST_CLEAN="null"
 fi
 if [ "$ISSUE_COUNT" -eq 0 ] && [ "$WARNING_COUNT" -eq 0 ]; then
@@ -586,12 +596,12 @@ BY_SOURCE_JSON=$(echo "$ORPHANED_MOVIES_JSON" "$ORPHANED_TV_JSON" | jq -s '
     })
 ')
 
-# Build comparison JSON
+# Build comparison JSON (against weekly baseline)
 COMPARISON_JSON="null"
-if [ -f "$REPORT_PREV" ]; then
-    PREV_ISSUES=$(jq -r '.summary.issues // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
-    PREV_WARNINGS=$(jq -r '.summary.warnings // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
-    PREV_DUPLICATES=$(jq -r '.summary.duplicates // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
+if [ -f "$BASELINE_FILE" ]; then
+    PREV_ISSUES=$(jq -r '.summary.issues // 0' "$BASELINE_FILE" 2>/dev/null || echo "0")
+    PREV_WARNINGS=$(jq -r '.summary.warnings // 0' "$BASELINE_FILE" 2>/dev/null || echo "0")
+    PREV_DUPLICATES=$(jq -r '.summary.duplicates // 0' "$BASELINE_FILE" 2>/dev/null || echo "0")
 
     [ -z "$PREV_ISSUES" ] || [ "$PREV_ISSUES" = "null" ] && PREV_ISSUES=0
     [ -z "$PREV_WARNINGS" ] || [ "$PREV_WARNINGS" = "null" ] && PREV_WARNINGS=0

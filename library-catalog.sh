@@ -28,7 +28,7 @@ Options:
   --no-discord      Skip Discord notification
 
 Output: ~/kometa/scripts/reports/library-catalog.json (overwritten each run)
-Previous snapshot saved as library-catalog.prev.json for diffing.
+Weekly baseline saved as library-catalog.baseline.json for comparison.
 HELP
 }
 
@@ -53,7 +53,7 @@ LOG_FILE="$LOG_DIR/library-catalog/library-catalog_$(date +%Y%m%d_%H%M%S).log"
 mkdir -p "$LOG_DIR/library-catalog"
 
 CATALOG_FILE="$REPORT_DIR/library-catalog.json"
-PREV_CATALOG="$REPORT_DIR/library-catalog.prev.json"
+BASELINE_FILE="$REPORT_DIR/library-catalog.baseline.json"
 
 # Redirect output
 if [ "$QUIET" = true ]; then
@@ -90,9 +90,16 @@ echo "Movies: $MOVIES_DIR"
 echo "TV Shows: $TV_DIR"
 echo
 
-# Save previous catalog for diffing
-if [ -f "$CATALOG_FILE" ]; then
-    cp "$CATALOG_FILE" "$PREV_CATALOG"
+# Update weekly baseline (only if older than 7 days or doesn't exist)
+BASELINE_STALE=false
+if [ ! -f "$BASELINE_FILE" ]; then
+    BASELINE_STALE=true
+elif [ -f "$BASELINE_FILE" ]; then
+    _baseline_age=$(( $(date +%s) - $(stat -c %Y "$BASELINE_FILE") ))
+    [ "$_baseline_age" -gt 604800 ] && BASELINE_STALE=true
+fi
+if [ "$BASELINE_STALE" = true ] && [ -f "$CATALOG_FILE" ]; then
+    cp "$CATALOG_FILE" "$BASELINE_FILE"
 fi
 
 # --- Build movie list ---
@@ -209,10 +216,13 @@ DECADES_JSON=$(echo "$MOVIES_JSON" "$TV_JSON" | jq -s '
 ')
 
 # --- Added date tracking ---
-# Load existing added_dates from previous catalog (or empty)
+# Load existing added_dates from current report (persist across runs)
 ADDED_DATES_JSON='{}'
-if [ -f "$PREV_CATALOG" ]; then
-    ADDED_DATES_JSON=$(jq -r '.data.added_dates // {}' "$PREV_CATALOG" 2>/dev/null || echo '{}')
+if [ -f "$CATALOG_FILE" ]; then
+    ADDED_DATES_JSON=$(jq -r '.data.added_dates // {}' "$CATALOG_FILE" 2>/dev/null || echo '{}')
+    [ "$ADDED_DATES_JSON" = "null" ] && ADDED_DATES_JSON='{}'
+elif [ -f "$BASELINE_FILE" ]; then
+    ADDED_DATES_JSON=$(jq -r '.data.added_dates // {}' "$BASELINE_FILE" 2>/dev/null || echo '{}')
     [ "$ADDED_DATES_JSON" = "null" ] && ADDED_DATES_JSON='{}'
 fi
 
@@ -285,11 +295,11 @@ REMOVED_SHOWS=()
 NEW_SEASONS=()
 NEW_EPISODES=()
 
-if [ -f "$PREV_CATALOG" ]; then
-    echo "Comparing with previous catalog..."
+if [ -f "$BASELINE_FILE" ]; then
+    echo "Comparing with weekly baseline..."
 
-    # Extract movie names from both catalogs
-    PREV_MOVIES=$(jq -r '(.data.movies // .movies)[] | if type == "object" then .name else . end' "$PREV_CATALOG" 2>/dev/null | sort)
+    # Extract movie names from baseline
+    PREV_MOVIES=$(jq -r '(.data.movies // .movies)[] | if type == "object" then .name else . end' "$BASELINE_FILE" 2>/dev/null | sort)
     CURR_MOVIES=$(echo "$MOVIES_JSON" | jq -r '.[].name' | sort)
 
     while IFS= read -r movie; do
@@ -303,7 +313,7 @@ if [ -f "$PREV_CATALOG" ]; then
     done < <(comm -23 <(echo "$PREV_MOVIES") <(echo "$CURR_MOVIES"))
 
     # Extract TV show names
-    PREV_SHOWS=$(jq -r '(.data.shows // .shows)[].name' "$PREV_CATALOG" 2>/dev/null | sort)
+    PREV_SHOWS=$(jq -r '(.data.shows // .shows)[].name' "$BASELINE_FILE" 2>/dev/null | sort)
     CURR_SHOWS=$(echo "$TV_JSON" | jq -r '.[].name' | sort)
 
     while IFS= read -r show; do
@@ -330,7 +340,7 @@ if [ -f "$PREV_CATALOG" ]; then
             new_eps=$((curr_eps - prev_episodes))
             NEW_EPISODES+=("$prev_name (+$new_eps episode(s), now $curr_eps)")
         fi
-    done < <(jq -r '(.data.shows // .shows)[] | "\(.name)\t\(.seasons)\t\(.episodes)"' "$PREV_CATALOG" 2>/dev/null)
+    done < <(jq -r '(.data.shows // .shows)[] | "\(.name)\t\(.seasons)\t\(.episodes)"' "$BASELINE_FILE" 2>/dev/null)
 
     echo "  Added movies: ${#ADDED_MOVIES[@]}"
     echo "  Removed movies: ${#REMOVED_MOVIES[@]}"
@@ -380,7 +390,7 @@ echo "Log saved to: $LOG_FILE"
 # First, update duration now that we know it
 jq --argjson dur "$DURATION" '.duration_seconds = $dur' "$CATALOG_FILE" > "$CATALOG_FILE.tmp" && mv "$CATALOG_FILE.tmp" "$CATALOG_FILE"
 
-if [ -f "$PREV_CATALOG" ]; then
+if [ -f "$BASELINE_FILE" ]; then
     HAS_CHANGES=false
     [ ${#ADDED_MOVIES[@]} -gt 0 ] && HAS_CHANGES=true
     [ ${#REMOVED_MOVIES[@]} -gt 0 ] && HAS_CHANGES=true
@@ -422,7 +432,7 @@ echo "Catalog saved to: $CATALOG_FILE"
 DISCORD_DESC="**$MOVIE_COUNT** movies · **$TV_COUNT** shows · **$TOTAL_EPISODES** episodes"
 
 # Add diff info if available
-if [ -f "$PREV_CATALOG" ]; then
+if [ -f "$BASELINE_FILE" ]; then
     CHANGES=""
     [ ${#ADDED_MOVIES[@]} -gt 0 ] && CHANGES+="📥 ${#ADDED_MOVIES[@]} movies  "
     [ ${#ADDED_SHOWS[@]} -gt 0 ] && CHANGES+="📥 ${#ADDED_SHOWS[@]} shows  "
@@ -450,8 +460,8 @@ No changes since last run."
     fi
 fi
 
-# Only notify if there were changes or no previous catalog
-if [ ! -f "$PREV_CATALOG" ] || [ -n "$CHANGES" ]; then
+# Only notify if there were changes or no baseline
+if [ ! -f "$BASELINE_FILE" ] || [ -n "$CHANGES" ]; then
     HAS_REMOVALS=false
     [ ${#REMOVED_MOVIES[@]} -gt 0 ] && HAS_REMOVALS=true
     [ ${#REMOVED_SHOWS[@]} -gt 0 ] && HAS_REMOVALS=true

@@ -40,7 +40,7 @@ Defaults to /mnt/Media/TV Shows if no directory is specified.
 Auto-detects TV (show/season) vs Movies (flat) structure.
 
 Output: ~/kometa/scripts/reports/storage-report.json (overwritten each run)
-Previous snapshot saved as storage-report.prev.json for diffing.
+Weekly baseline saved as storage-report.baseline.json for comparison.
 HELP
 }
 
@@ -64,7 +64,7 @@ source "$SCRIPTS_DIR/config.sh"
 
 LOG_FILE="$LOG_DIR/storage-report/storage-report_$(date +%Y%m%d_%H%M%S).log"
 REPORT_FILE="$REPORT_DIR/storage-report.json"
-REPORT_PREV="$REPORT_DIR/storage-report.prev.json"
+BASELINE_FILE="$REPORT_DIR/storage-report.baseline.json"
 mkdir -p "$LOG_DIR/storage-report"
 BASE_PATH="${POSITIONAL[0]:-}"
 
@@ -401,9 +401,16 @@ echo "Report saved to: $REPORT_FILE"
 
 # --- Generate JSON Report ---
 
-# Backup previous report for diffing
-if [ -f "$REPORT_FILE" ]; then
-    cp "$REPORT_FILE" "$REPORT_PREV"
+# Update weekly baseline (only if older than 7 days or doesn't exist)
+BASELINE_STALE=false
+if [ ! -f "$BASELINE_FILE" ]; then
+    BASELINE_STALE=true
+elif [ -f "$BASELINE_FILE" ]; then
+    _baseline_age=$(( $(date +%s) - $(stat -c %Y "$BASELINE_FILE") ))
+    [ "$_baseline_age" -gt 604800 ] && BASELINE_STALE=true
+fi
+if [ "$BASELINE_STALE" = true ] && [ -f "$REPORT_FILE" ]; then
+    cp "$REPORT_FILE" "$BASELINE_FILE"
 fi
 
 # Build resolution breakdown JSON (with human-readable sizes)
@@ -478,12 +485,12 @@ done | jq -R -s '
 # Build top_by_size (top 10 largest items)
 TOP_JSON=$(echo "$ITEMS_JSON" | jq '[sort_by(-.size_bytes) | limit(10; .[])]')
 
-# Build comparison JSON
+# Build comparison JSON (against weekly baseline)
 COMPARISON_JSON="null"
-if [ -f "$REPORT_PREV" ]; then
-    PREV_FOLDERS=$(jq -r '.summary.folders_scanned // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
-    PREV_FILES=$(jq -r '.summary.total_files // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
-    PREV_SIZE=$(jq -r '.summary.total_size_bytes // 0' "$REPORT_PREV" 2>/dev/null || echo "0")
+if [ -f "$BASELINE_FILE" ]; then
+    PREV_FOLDERS=$(jq -r '.summary.folders_scanned // 0' "$BASELINE_FILE" 2>/dev/null || echo "0")
+    PREV_FILES=$(jq -r '.summary.total_files // 0' "$BASELINE_FILE" 2>/dev/null || echo "0")
+    PREV_SIZE=$(jq -r '.summary.total_size_bytes // 0' "$BASELINE_FILE" 2>/dev/null || echo "0")
 
     [ -z "$PREV_FOLDERS" ] || [ "$PREV_FOLDERS" = "null" ] && PREV_FOLDERS=0
     [ -z "$PREV_FILES" ] || [ "$PREV_FILES" = "null" ] && PREV_FILES=0
@@ -584,7 +591,7 @@ DISCORD_DESC="**$TOTAL_FILES** files · **$TOTAL_HUMAN**
 🎞️ $CODEC_SUMMARY"
 
 # Add comparison info if available
-if [ -f "$REPORT_PREV" ] && [ "${FILES_CHANGE:-0}" -ne 0 ] 2>/dev/null; then
+if [ -f "$BASELINE_FILE" ] && [ "${FILES_CHANGE:-0}" -ne 0 ] 2>/dev/null; then
     if [ "$FILES_CHANGE" -gt 0 ]; then
         DISCORD_DESC+="
 📈 +$FILES_CHANGE files since last run"
