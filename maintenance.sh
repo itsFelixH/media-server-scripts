@@ -418,74 +418,93 @@ check_processes() {
 validate_configs() {
     echo "---- CONFIGURATION VALIDATION ----"
     
-    # Check Kometa config exists and validate YAML syntax
-    if [ -f "$BASE_PATH/config.yml" ]; then
-        if python3 -c "import yaml; yaml.safe_load(open('$BASE_PATH/config.yml'))" 2>/dev/null; then
-            echo "[✓] Kometa config.yml is valid YAML"
-        else
-            echo "[✗] Kometa config.yml has YAML syntax errors"
-            notify "Kometa config.yml has YAML syntax errors" "error"
+    local valid=0 invalid=0 missing=0
+
+    # Helper: validate a single YAML file
+    validate_yaml() {
+        local file="$1"
+        local label="$2"
+        if [ ! -f "$file" ]; then
+            echo "[✗] $label — not found"
+            ((missing++))
+            return 1
         fi
+        local err
+        err=$(python3 -c "
+import yaml, sys
+try:
+    with open('$file', 'r') as f:
+        yaml.safe_load(f)
+except yaml.YAMLError as e:
+    mark = getattr(e, 'problem_mark', None)
+    if mark:
+        print(f'Line {mark.line + 1}, col {mark.column + 1}: {e.problem}')
+    else:
+        print(str(e)[:120])
+    sys.exit(1)
+" 2>&1)
+        if [ $? -eq 0 ]; then
+            echo "[✓] $label"
+            ((valid++))
+        else
+            echo "[✗] $label — $err"
+            ((invalid++))
+            return 1
+        fi
+    }
+
+    echo ""
+    echo "Kometa core configs:"
+    validate_yaml "$BASE_PATH/config.yml" "config.yml"
+    validate_yaml "$BASE_PATH/movies.yml" "movies.yml"
+    validate_yaml "$BASE_PATH/tv.yml" "tv.yml"
+    [ -f "$BASE_PATH/playlists.yml" ] && validate_yaml "$BASE_PATH/playlists.yml" "playlists.yml"
+
+    echo ""
+    echo "Kometa metadata files:"
+    if [ -d "$METADATA_DIR" ]; then
+        while IFS= read -r yml_file; do
+            local rel_path="${yml_file#$BASE_PATH/}"
+            validate_yaml "$yml_file" "$rel_path"
+        done < <(find "$METADATA_DIR" -name "*.yml" -type f | sort)
     else
-        echo "[✗] Kometa config.yml not found"
+        echo "[!] Metadata directory not found: $METADATA_DIR"
     fi
 
-    # Check Kometa movies.yml
-    if [ -f "$BASE_PATH/movies.yml" ]; then
-        if python3 -c "import yaml; yaml.safe_load(open('$BASE_PATH/movies.yml'))" 2>/dev/null; then
-            echo "[✓] Kometa movies.yml is valid YAML"
-        else
-            echo "[✗] Kometa movies.yml has YAML syntax errors"
-            notify "Kometa movies.yml has YAML syntax errors" "error"
-        fi
+    echo ""
+    echo "Kometa overlay files:"
+    if [ -d "$BASE_PATH/overlays" ]; then
+        while IFS= read -r yml_file; do
+            local rel_path="${yml_file#$BASE_PATH/}"
+            validate_yaml "$yml_file" "$rel_path"
+        done < <(find "$BASE_PATH/overlays" -name "*.yml" -type f | sort)
     fi
 
-    # Check Kometa tv.yml
-    if [ -f "$BASE_PATH/tv.yml" ]; then
-        if python3 -c "import yaml; yaml.safe_load(open('$BASE_PATH/tv.yml'))" 2>/dev/null; then
-            echo "[✓] Kometa tv.yml is valid YAML"
-        else
-            echo "[✗] Kometa tv.yml has YAML syntax errors"
-            notify "Kometa tv.yml has YAML syntax errors" "error"
-        fi
-    fi
+    echo ""
+    echo "External configs:"
+    validate_yaml "$UMTK_CONFIG_DIR/config.yml" "UMTK config.yml"
+    validate_yaml "$UMTK_CONFIG_DIR/tssk_config.yml" "UMTK tssk_config.yml"
+    validate_yaml "$SCRIPTS_DIR/config.yml" "Scripts config.yml"
     
-    # Check UMTK config
-    local umtk_config="$UMTK_CONFIG_DIR/config.yml"
-    if [ -f "$umtk_config" ]; then
-        if python3 -c "import yaml; yaml.safe_load(open('$umtk_config'))" 2>/dev/null; then
-            echo "[✓] UMTK config.yml is valid YAML"
-        else
-            echo "[✗] UMTK config.yml has YAML syntax errors"
-            notify "UMTK config.yml has YAML syntax errors" "error"
-        fi
-    else
-        echo "[✗] UMTK config.yml not found"
-    fi
-    
-    # Check UMTK TSSK config
-    local tssk_config="$UMTK_CONFIG_DIR/tssk_config.yml"
-    if [ -f "$tssk_config" ]; then
-        if python3 -c "import yaml; yaml.safe_load(open('$tssk_config'))" 2>/dev/null; then
-            echo "[✓] UMTK tssk_config.yml is valid YAML"
-        else
-            echo "[✗] UMTK tssk_config.yml has YAML syntax errors"
-            notify "UMTK tssk_config.yml has YAML syntax errors" "error"
-        fi
-    else
-        echo "[✗] UMTK tssk_config.yml not found"
-    fi
-    
-    # Check ImageMaid config
+    # ImageMaid .env (not YAML, just check existence)
     local imagemaid_env="$IMAGEMAID_CONFIG_DIR/.env"
     if [ -f "$imagemaid_env" ]; then
         echo "[✓] ImageMaid .env exists"
+        ((valid++))
     else
         echo "[✗] ImageMaid .env not found"
+        ((missing++))
     fi
     
     # Check log directory
     [ -d "$LOG_DIR" ] && echo "[✓] Log directory exists" || echo "[✗] Log directory missing"
+
+    echo ""
+    echo "Results: $valid valid, $invalid invalid, $missing missing"
+    
+    if [ $invalid -gt 0 ]; then
+        notify "YAML validation failed: $invalid file(s) have syntax errors" "error"
+    fi
 }
 
 # Token consistency check
