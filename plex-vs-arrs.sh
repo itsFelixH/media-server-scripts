@@ -29,7 +29,7 @@ Options:
   -q, --quiet       Suppress terminal output (log only)
   --no-discord      Skip Discord notification
 
-Output: ~/kometa/scripts/reports/plex-vs-arrs.md (overwritten each run)
+Output: ~/kometa/scripts/reports/plex-vs-arrs.json (overwritten each run)
 HELP
 }
 
@@ -55,7 +55,7 @@ START_TIME=$(date +%s)
 LOG_FILE="$LOG_DIR/plex-vs-arrs/plex-vs-arrs_$(date +%Y%m%d_%H%M%S).log"
 mkdir -p "$LOG_DIR/plex-vs-arrs"
 
-REPORT_FILE="$REPORT_DIR/plex-vs-arrs.md"
+REPORT_FILE="$REPORT_DIR/plex-vs-arrs.json"
 
 # Redirect output
 if [ "$QUIET" = true ]; then
@@ -147,7 +147,7 @@ lookup_tvdb_from_imdb() {
 
 ####### DATA FETCHING #######
 
-# Fetch all Plex movies with their GUIDs
+# Fetch all Plex movies with their GUIDs (single bulk API call)
 fetch_plex_movies() {
     echo ""
     echo "🎬 Fetching Plex movies..."
@@ -163,18 +163,13 @@ fetch_plex_movies() {
         return 1
     fi
 
-    # Fetch all movies from that section
+    # Fetch all movies with GUIDs in a single call
     local movies_json
-    movies_json=$(plex_api "/library/sections/${movie_key}/all")
+    movies_json=$(plex_api "/library/sections/${movie_key}/all?includeGuids=1")
 
     local total_movies
     total_movies=$(echo "$movies_json" | jq '.MediaContainer.size // 0')
     echo "  Found $total_movies movies in Plex"
-
-    # We need GUIDs per movie, which requires fetching each movie's metadata
-    # First, get all ratingKeys
-    local rating_keys
-    rating_keys=$(echo "$movies_json" | jq -r '.MediaContainer.Metadata[].ratingKey')
 
     # Arrays to hold results
     declare -gA PLEX_MOVIE_TMDB=()       # tmdb_id -> title
@@ -182,40 +177,12 @@ fetch_plex_movies() {
     declare -gA PLEX_MOVIE_DUPES=()       # tmdb_id -> "title1|title2|..."
     TOTAL_PLEX_MOVIES=$total_movies
 
-    local processed=0
-    local total_keys
-    total_keys=$(echo "$rating_keys" | wc -l)
-
-    while IFS= read -r key; do
-        [ -z "$key" ] && continue
-        processed=$((processed + 1))
-
-        # Print progress every 50 items
-        if [ $((processed % 50)) -eq 0 ]; then
-            echo "  Processing: $processed / $total_keys"
-        fi
-
-        local meta_json
-        meta_json=$(plex_api "/library/metadata/${key}")
-
-        local title
-        title=$(echo "$meta_json" | jq -r '.MediaContainer.Metadata[0].title // "Unknown"')
+    # Parse all movies from the bulk response
+    while IFS=$'\t' read -r title tmdb_id imdb_id; do
+        [ -z "$title" ] && continue
         title=$(strip_tags "$title")
 
-        # Extract GUIDs
-        local tmdb_id="" imdb_id=""
-        local guids
-        guids=$(echo "$meta_json" | jq -r '.MediaContainer.Metadata[0].Guid[]?.id // empty' 2>/dev/null)
-
-        while IFS= read -r guid; do
-            [ -z "$guid" ] && continue
-            case "$guid" in
-                tmdb://*) tmdb_id="${guid#tmdb://}" ;;
-                imdb://*) imdb_id="${guid#imdb://}" ;;
-            esac
-        done <<< "$guids"
-
-        # Fallback: lookup TMDb from IMDb
+        # Fallback: lookup TMDb from IMDb if no TMDb ID
         if [ -z "$tmdb_id" ] && [ -n "$imdb_id" ]; then
             tmdb_id=$(lookup_tmdb_from_imdb "$imdb_id")
         fi
@@ -234,14 +201,18 @@ fetch_plex_movies() {
         else
             PLEX_MOVIE_NO_ID+=("$title")
         fi
-    done <<< "$rating_keys"
+    done < <(echo "$movies_json" | jq -r '.MediaContainer.Metadata[] | [
+        .title,
+        ([.Guid[]?.id // empty | select(startswith("tmdb://"))] | first // "" | ltrimstr("tmdb://")),
+        ([.Guid[]?.id // empty | select(startswith("imdb://"))] | first // "" | ltrimstr("imdb://"))
+    ] | @tsv')
 
     echo "  Movies with TMDb IDs: ${#PLEX_MOVIE_TMDB[@]}"
     echo "  Movies without usable IDs: ${#PLEX_MOVIE_NO_ID[@]}"
     echo "  Duplicate TMDb IDs: ${#PLEX_MOVIE_DUPES[@]}"
 }
 
-# Fetch all Plex TV shows with their GUIDs
+# Fetch all Plex TV shows with their GUIDs (single bulk API call)
 fetch_plex_tv_shows() {
     echo ""
     echo "📺 Fetching Plex TV shows..."
@@ -256,51 +227,23 @@ fetch_plex_tv_shows() {
         return 1
     fi
 
+    # Fetch all shows with GUIDs in a single call
     local shows_json
-    shows_json=$(plex_api "/library/sections/${tv_key}/all")
+    shows_json=$(plex_api "/library/sections/${tv_key}/all?includeGuids=1")
 
     local total_shows
     total_shows=$(echo "$shows_json" | jq '.MediaContainer.size // 0')
     echo "  Found $total_shows TV shows in Plex"
-
-    local rating_keys
-    rating_keys=$(echo "$shows_json" | jq -r '.MediaContainer.Metadata[].ratingKey')
 
     declare -gA PLEX_SHOW_TVDB=()         # tvdb_id -> title
     declare -ga PLEX_SHOW_NO_ID=()         # titles without usable IDs
     declare -gA PLEX_SHOW_DUPES=()         # tvdb_id -> "title1|title2|..."
     TOTAL_PLEX_SHOWS=$total_shows
 
-    local processed=0
-    local total_keys
-    total_keys=$(echo "$rating_keys" | wc -l)
-
-    while IFS= read -r key; do
-        [ -z "$key" ] && continue
-        processed=$((processed + 1))
-
-        if [ $((processed % 50)) -eq 0 ]; then
-            echo "  Processing: $processed / $total_keys"
-        fi
-
-        local meta_json
-        meta_json=$(plex_api "/library/metadata/${key}")
-
-        local title
-        title=$(echo "$meta_json" | jq -r '.MediaContainer.Metadata[0].title // "Unknown"')
+    # Parse all shows from the bulk response
+    while IFS=$'\t' read -r title tvdb_id imdb_id; do
+        [ -z "$title" ] && continue
         title=$(strip_tags "$title")
-
-        local tvdb_id="" imdb_id=""
-        local guids
-        guids=$(echo "$meta_json" | jq -r '.MediaContainer.Metadata[0].Guid[]?.id // empty' 2>/dev/null)
-
-        while IFS= read -r guid; do
-            [ -z "$guid" ] && continue
-            case "$guid" in
-                tvdb://*) tvdb_id="${guid#tvdb://}" ;;
-                imdb://*) imdb_id="${guid#imdb://}" ;;
-            esac
-        done <<< "$guids"
 
         # Fallback: lookup TVDb from IMDb via Sonarr
         if [ -z "$tvdb_id" ] && [ -n "$imdb_id" ]; then
@@ -320,7 +263,11 @@ fetch_plex_tv_shows() {
         else
             PLEX_SHOW_NO_ID+=("$title")
         fi
-    done <<< "$rating_keys"
+    done < <(echo "$shows_json" | jq -r '.MediaContainer.Metadata[] | [
+        .title,
+        ([.Guid[]?.id // empty | select(startswith("tvdb://"))] | first // "" | ltrimstr("tvdb://")),
+        ([.Guid[]?.id // empty | select(startswith("imdb://"))] | first // "" | ltrimstr("imdb://"))
+    ] | @tsv')
 
     echo "  TV shows with TVDb IDs: ${#PLEX_SHOW_TVDB[@]}"
     echo "  TV shows without usable IDs: ${#PLEX_SHOW_NO_ID[@]}"
@@ -632,154 +579,188 @@ generate_report() {
     echo ""
     echo "📝 Generating report..."
 
-    cat > "$REPORT_FILE" <<EOF
-# Plex vs ARRs Comparison
+    local elapsed=$(( $(date +%s) - START_TIME ))
+    local total_mismatches=$(( ${#MOVIES_PLEX_ONLY[@]} + ${#MOVIES_RADARR_ONLY[@]} + ${#SHOWS_PLEX_ONLY[@]} + ${#SHOWS_SONARR_ONLY[@]} ))
 
-Generated: $(date '+%Y-%m-%d %H:%M:%S')
+    # Determine health status
+    local health_status="ok" health_msg="All synced"
+    if [ $total_mismatches -gt 20 ]; then
+        health_status="warning"
+        health_msg="$total_mismatches mismatches found"
+    elif [ $total_mismatches -gt 0 ]; then
+        health_status="ok"
+        health_msg="$total_mismatches mismatches found"
+    fi
 
-## Summary
-
-| Metric | Count |
-|--------|-------|
-| Plex Movies (total) | $TOTAL_PLEX_MOVIES |
-| Plex Movies (with TMDb ID) | ${#PLEX_MOVIE_TMDB[@]} |
-| Plex Movies (no usable ID) | ${#PLEX_MOVIE_NO_ID[@]} |
-| Plex Movie duplicates | ${#PLEX_MOVIE_DUPES[@]} |
-| Radarr Movies (downloaded) | ${#RADARR_MOVIES[@]} |
-| Plex TV Shows (total) | $TOTAL_PLEX_SHOWS |
-| Plex TV Shows (with TVDb ID) | ${#PLEX_SHOW_TVDB[@]} |
-| Plex TV Shows (no usable ID) | ${#PLEX_SHOW_NO_ID[@]} |
-| Plex TV Show duplicates | ${#PLEX_SHOW_DUPES[@]} |
-| Sonarr TV Shows (downloaded) | ${#SONARR_SHOWS[@]} |
-
-### Mismatches
-
-| Category | Count |
-|----------|-------|
-| Movies only in Plex | ${#MOVIES_PLEX_ONLY[@]} |
-| Movies only in Radarr | ${#MOVIES_RADARR_ONLY[@]} |
-| Movies matched by title | ${#MOVIES_TITLE_MATCH[@]} |
-| TV Shows only in Plex | ${#SHOWS_PLEX_ONLY[@]} |
-| TV Shows only in Sonarr | ${#SHOWS_SONARR_ONLY[@]} |
-| TV Shows matched by title | ${#SHOWS_TITLE_MATCH[@]} |
-
-EOF
-
-    # Movies in Plex only
+    # Build JSON arrays for each category
+    local movies_plex_only_json="[]"
     if [ ${#MOVIES_PLEX_ONLY[@]} -gt 0 ]; then
-        echo "## Movies in Plex but not in Radarr" >> "$REPORT_FILE"
-        echo "" >> "$REPORT_FILE"
-        printf '%s\n' "${MOVIES_PLEX_ONLY[@]}" | sort -t'|' -k1 -f | while IFS='|' read -r title id; do
-            echo "- $title ($id)" >> "$REPORT_FILE"
-        done
-        echo "" >> "$REPORT_FILE"
+        movies_plex_only_json=$(printf '%s\n' "${MOVIES_PLEX_ONLY[@]}" | sort -t'|' -k1 -f | jq -R -s '
+            split("\n") | map(select(length > 0)) | map(
+                split("|") | {
+                    title: .[0],
+                    id: .[1],
+                    url: (if .[1] | test("tmdbId:") then "https://www.themoviedb.org/movie/" + (.[1] | ltrimstr("tmdbId:")) else null end),
+                    action: "Not tracked in Radarr — add or verify UMTK placeholder"
+                }
+            )')
     fi
 
-    # Movies in Radarr only
+    local movies_radarr_only_json="[]"
     if [ ${#MOVIES_RADARR_ONLY[@]} -gt 0 ]; then
-        echo "## Movies in Radarr but not in Plex" >> "$REPORT_FILE"
-        echo "" >> "$REPORT_FILE"
-        printf '%s\n' "${MOVIES_RADARR_ONLY[@]}" | sort -t'|' -k1 -f | while IFS='|' read -r title id; do
-            echo "- $title ($id)" >> "$REPORT_FILE"
-        done
-        echo "" >> "$REPORT_FILE"
+        movies_radarr_only_json=$(printf '%s\n' "${MOVIES_RADARR_ONLY[@]}" | sort -t'|' -k1 -f | jq -R -s '
+            split("\n") | map(select(length > 0)) | map(
+                split("|") | {
+                    title: .[0],
+                    id: .[1],
+                    url: (if .[1] | test("tmdbId:") then "https://www.themoviedb.org/movie/" + (.[1] | ltrimstr("tmdbId:")) else null end),
+                    action: "File exists in Radarr but not in Plex — rescan Plex library"
+                }
+            )')
     fi
 
-    # Title matches (movies)
+    local movies_title_match_json="[]"
     if [ ${#MOVIES_TITLE_MATCH[@]} -gt 0 ]; then
-        echo "## Movies Matched by Title (Different IDs)" >> "$REPORT_FILE"
-        echo "" >> "$REPORT_FILE"
-        printf '%s\n' "${MOVIES_TITLE_MATCH[@]}" | sort -f | while IFS= read -r line; do
-            echo "- $line" >> "$REPORT_FILE"
-        done
-        echo "" >> "$REPORT_FILE"
+        movies_title_match_json=$(printf '%s\n' "${MOVIES_TITLE_MATCH[@]}" | sort -f | jq -R -s '
+            split("\n") | map(select(length > 0)) | map({match: ., action: "Same title, different IDs — verify correct match in Radarr"})')
     fi
 
-    # TV Shows in Plex only
+    local shows_plex_only_json="[]"
     if [ ${#SHOWS_PLEX_ONLY[@]} -gt 0 ]; then
-        echo "## TV Shows in Plex but not in Sonarr" >> "$REPORT_FILE"
-        echo "" >> "$REPORT_FILE"
-        printf '%s\n' "${SHOWS_PLEX_ONLY[@]}" | sort -t'|' -k1 -f | while IFS='|' read -r title id; do
-            echo "- $title ($id)" >> "$REPORT_FILE"
-        done
-        echo "" >> "$REPORT_FILE"
+        shows_plex_only_json=$(printf '%s\n' "${SHOWS_PLEX_ONLY[@]}" | sort -t'|' -k1 -f | jq -R -s '
+            split("\n") | map(select(length > 0)) | map(
+                split("|") | {
+                    title: .[0],
+                    id: .[1],
+                    url: (if .[1] | test("tvdbId:") then "https://www.thetvdb.com/dereferrer/series/" + (.[1] | ltrimstr("tvdbId:")) else null end),
+                    action: "Not tracked in Sonarr — add or verify UMTK placeholder"
+                }
+            )')
     fi
 
-    # TV Shows in Sonarr only
+    local shows_sonarr_only_json="[]"
     if [ ${#SHOWS_SONARR_ONLY[@]} -gt 0 ]; then
-        echo "## TV Shows in Sonarr but not in Plex" >> "$REPORT_FILE"
-        echo "" >> "$REPORT_FILE"
-        printf '%s\n' "${SHOWS_SONARR_ONLY[@]}" | sort -t'|' -k1 -f | while IFS='|' read -r title id; do
-            echo "- $title ($id)" >> "$REPORT_FILE"
-        done
-        echo "" >> "$REPORT_FILE"
+        shows_sonarr_only_json=$(printf '%s\n' "${SHOWS_SONARR_ONLY[@]}" | sort -t'|' -k1 -f | jq -R -s '
+            split("\n") | map(select(length > 0)) | map(
+                split("|") | {
+                    title: .[0],
+                    id: .[1],
+                    url: (if .[1] | test("tvdbId:") then "https://www.thetvdb.com/dereferrer/series/" + (.[1] | ltrimstr("tvdbId:")) else null end),
+                    action: "Episodes in Sonarr but not in Plex — rescan Plex library"
+                }
+            )')
     fi
 
-    # Title matches (shows)
+    local shows_title_match_json="[]"
     if [ ${#SHOWS_TITLE_MATCH[@]} -gt 0 ]; then
-        echo "## TV Shows Matched by Title (Different IDs)" >> "$REPORT_FILE"
-        echo "" >> "$REPORT_FILE"
-        printf '%s\n' "${SHOWS_TITLE_MATCH[@]}" | sort -f | while IFS= read -r line; do
-            echo "- $line" >> "$REPORT_FILE"
+        shows_title_match_json=$(printf '%s\n' "${SHOWS_TITLE_MATCH[@]}" | sort -f | jq -R -s '
+            split("\n") | map(select(length > 0)) | map({match: ., action: "Same title, different IDs — verify correct match in Sonarr"})')
+    fi
+
+    # Build duplicates JSON
+    local movie_dupes_json="[]"
+    if [ ${#PLEX_MOVIE_DUPES[@]} -gt 0 ]; then
+        for tmdb_id in "${!PLEX_MOVIE_DUPES[@]}"; do
+            movie_dupes_json=$(echo "$movie_dupes_json" | jq --arg id "$tmdb_id" --arg titles "${PLEX_MOVIE_DUPES[$tmdb_id]}" \
+                '. + [{tmdb_id: $id, titles: ($titles | split("|"))}]')
         done
-        echo "" >> "$REPORT_FILE"
     fi
 
-    # Duplicates
-    if [ ${#PLEX_MOVIE_DUPES[@]} -gt 0 ] || [ ${#PLEX_SHOW_DUPES[@]} -gt 0 ]; then
-        echo "## Duplicates in Plex" >> "$REPORT_FILE"
-        echo "" >> "$REPORT_FILE"
-
-        if [ ${#PLEX_MOVIE_DUPES[@]} -gt 0 ]; then
-            echo "### Duplicate Movies" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
-            for tmdb_id in "${!PLEX_MOVIE_DUPES[@]}"; do
-                echo "- TMDb ID $tmdb_id:" >> "$REPORT_FILE"
-                IFS='|' read -ra titles <<< "${PLEX_MOVIE_DUPES[$tmdb_id]}"
-                for t in "${titles[@]}"; do
-                    echo "  - $t" >> "$REPORT_FILE"
-                done
-            done
-            echo "" >> "$REPORT_FILE"
-        fi
-
-        if [ ${#PLEX_SHOW_DUPES[@]} -gt 0 ]; then
-            echo "### Duplicate TV Shows" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
-            for tvdb_id in "${!PLEX_SHOW_DUPES[@]}"; do
-                echo "- TVDb ID $tvdb_id:" >> "$REPORT_FILE"
-                IFS='|' read -ra titles <<< "${PLEX_SHOW_DUPES[$tvdb_id]}"
-                for t in "${titles[@]}"; do
-                    echo "  - $t" >> "$REPORT_FILE"
-                done
-            done
-            echo "" >> "$REPORT_FILE"
-        fi
+    local show_dupes_json="[]"
+    if [ ${#PLEX_SHOW_DUPES[@]} -gt 0 ]; then
+        for tvdb_id in "${!PLEX_SHOW_DUPES[@]}"; do
+            show_dupes_json=$(echo "$show_dupes_json" | jq --arg id "$tvdb_id" --arg titles "${PLEX_SHOW_DUPES[$tvdb_id]}" \
+                '. + [{tvdb_id: $id, titles: ($titles | split("|"))}]')
+        done
     fi
 
-    # Items without usable IDs
-    if [ ${#PLEX_MOVIE_NO_ID[@]} -gt 0 ] || [ ${#PLEX_SHOW_NO_ID[@]} -gt 0 ]; then
-        echo "## Items Without Usable IDs" >> "$REPORT_FILE"
-        echo "" >> "$REPORT_FILE"
-
-        if [ ${#PLEX_MOVIE_NO_ID[@]} -gt 0 ]; then
-            echo "### Movies" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
-            printf '%s\n' "${PLEX_MOVIE_NO_ID[@]}" | sort -f | while IFS= read -r title; do
-                echo "- $title" >> "$REPORT_FILE"
-            done
-            echo "" >> "$REPORT_FILE"
-        fi
-
-        if [ ${#PLEX_SHOW_NO_ID[@]} -gt 0 ]; then
-            echo "### TV Shows" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
-            printf '%s\n' "${PLEX_SHOW_NO_ID[@]}" | sort -f | while IFS= read -r title; do
-                echo "- $title" >> "$REPORT_FILE"
-            done
-            echo "" >> "$REPORT_FILE"
-        fi
+    # Build no-ID items
+    local movies_no_id_json="[]"
+    if [ ${#PLEX_MOVIE_NO_ID[@]} -gt 0 ]; then
+        movies_no_id_json=$(printf '%s\n' "${PLEX_MOVIE_NO_ID[@]}" | sort -f | jq -R -s 'split("\n") | map(select(length > 0))')
     fi
+
+    local shows_no_id_json="[]"
+    if [ ${#PLEX_SHOW_NO_ID[@]} -gt 0 ]; then
+        shows_no_id_json=$(printf '%s\n' "${PLEX_SHOW_NO_ID[@]}" | sort -f | jq -R -s 'split("\n") | map(select(length > 0))')
+    fi
+
+    # Write final JSON report
+    jq -n \
+        --argjson version 1 \
+        --arg type "plex-vs-arrs" \
+        --arg generated "$(date -Iseconds)" \
+        --arg generated_by "$SCRIPT_NAME" \
+        --argjson duration "$elapsed" \
+        --arg health_status "$health_status" \
+        --arg health_msg "$health_msg" \
+        --argjson plex_movies "$TOTAL_PLEX_MOVIES" \
+        --argjson plex_movies_with_id "${#PLEX_MOVIE_TMDB[@]}" \
+        --argjson plex_movies_no_id "${#PLEX_MOVIE_NO_ID[@]}" \
+        --argjson plex_movie_dupes "${#PLEX_MOVIE_DUPES[@]}" \
+        --argjson radarr_movies "${#RADARR_MOVIES[@]}" \
+        --argjson plex_shows "$TOTAL_PLEX_SHOWS" \
+        --argjson plex_shows_with_id "${#PLEX_SHOW_TVDB[@]}" \
+        --argjson plex_shows_no_id "${#PLEX_SHOW_NO_ID[@]}" \
+        --argjson plex_show_dupes "${#PLEX_SHOW_DUPES[@]}" \
+        --argjson sonarr_shows "${#SONARR_SHOWS[@]}" \
+        --argjson movies_plex_only_count "${#MOVIES_PLEX_ONLY[@]}" \
+        --argjson movies_radarr_only_count "${#MOVIES_RADARR_ONLY[@]}" \
+        --argjson movies_title_match_count "${#MOVIES_TITLE_MATCH[@]}" \
+        --argjson shows_plex_only_count "${#SHOWS_PLEX_ONLY[@]}" \
+        --argjson shows_sonarr_only_count "${#SHOWS_SONARR_ONLY[@]}" \
+        --argjson shows_title_match_count "${#SHOWS_TITLE_MATCH[@]}" \
+        --argjson movies_plex_only "$movies_plex_only_json" \
+        --argjson movies_radarr_only "$movies_radarr_only_json" \
+        --argjson movies_title_match "$movies_title_match_json" \
+        --argjson shows_plex_only "$shows_plex_only_json" \
+        --argjson shows_sonarr_only "$shows_sonarr_only_json" \
+        --argjson shows_title_match "$shows_title_match_json" \
+        --argjson movie_dupes "$movie_dupes_json" \
+        --argjson show_dupes "$show_dupes_json" \
+        --argjson movies_no_id "$movies_no_id_json" \
+        --argjson shows_no_id "$shows_no_id_json" \
+        '{
+            version: $version,
+            type: $type,
+            generated: $generated,
+            generated_by: $generated_by,
+            duration_seconds: $duration,
+            health: {status: $health_status, message: $health_msg},
+            summary: {
+                plex_movies: $plex_movies,
+                plex_movies_with_id: $plex_movies_with_id,
+                radarr_movies: $radarr_movies,
+                plex_shows: $plex_shows,
+                plex_shows_with_id: $plex_shows_with_id,
+                sonarr_shows: $sonarr_shows,
+                movies_plex_only: $movies_plex_only_count,
+                movies_radarr_only: $movies_radarr_only_count,
+                shows_plex_only: $shows_plex_only_count,
+                shows_sonarr_only: $shows_sonarr_only_count,
+                total_mismatches: ($movies_plex_only_count + $movies_radarr_only_count + $shows_plex_only_count + $shows_sonarr_only_count)
+            },
+            data: {
+                movies: {
+                    plex_only: $movies_plex_only,
+                    radarr_only: $movies_radarr_only,
+                    title_matches: $movies_title_match
+                },
+                shows: {
+                    plex_only: $shows_plex_only,
+                    sonarr_only: $shows_sonarr_only,
+                    title_matches: $shows_title_match
+                },
+                duplicates: {
+                    movies: $movie_dupes,
+                    shows: $show_dupes
+                },
+                no_id: {
+                    movies: $movies_no_id,
+                    shows: $shows_no_id
+                }
+            }
+        }' > "$REPORT_FILE"
 
     echo "  Report saved to: $REPORT_FILE"
 }
