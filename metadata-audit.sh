@@ -571,8 +571,8 @@ TV_COVERAGE=0
 # Last clean tracking — read from prev report, update if currently clean
 LAST_CLEAN="null"
 if [ -f "$REPORT_PREV" ]; then
-    LAST_CLEAN=$(jq -r '.data.last_clean // "null"' "$REPORT_PREV" 2>/dev/null)
-    [ "$LAST_CLEAN" = "null" ] || [ -z "$LAST_CLEAN" ] && LAST_CLEAN="null"
+    LAST_CLEAN=$(jq '.data.last_clean // null' "$REPORT_PREV" 2>/dev/null)
+    [ -z "$LAST_CLEAN" ] && LAST_CLEAN="null"
 fi
 if [ "$ISSUE_COUNT" -eq 0 ] && [ "$WARNING_COUNT" -eq 0 ]; then
     LAST_CLEAN="\"$(date +%Y-%m-%d)\""

@@ -413,8 +413,8 @@ for bucket in "4K" "FHD" "HD" "SD" "Unknown" "Other"; do
     [ "$count" -eq 0 ] && continue
     size_bytes=${RES_SIZES[$bucket]:-0}
     size_human=$(format_size "$size_bytes")
-    RES_JSON=$(echo "$RES_JSON" | jq --arg label "$bucket" --argjson folders "$count" --argjson size_bytes "$size_bytes" --arg size "$size_human" \
-        '. + [{"label": $label, "folders": $folders, "size_bytes": $size_bytes, "size": $size}]')
+    RES_JSON=$(echo "$RES_JSON" | jq --arg lbl "$bucket" --argjson folders "$count" --argjson sb "$size_bytes" --arg sz "$size_human" \
+        '. + [{"label": $lbl, "folders": $folders, "size_bytes": $sb, "size": $sz}]')
 done
 
 # Build codec breakdown JSON (with human-readable sizes)
@@ -424,16 +424,16 @@ for codec in "HEVC" "H264" "AV1" "Unknown"; do
     [ "$count" -eq 0 ] && continue
     size_bytes=${CODEC_SIZES[$codec]:-0}
     size_human=$(format_size "$size_bytes")
-    CODEC_JSON=$(echo "$CODEC_JSON" | jq --arg label "$codec" --argjson folders "$count" --argjson size_bytes "$size_bytes" --arg size "$size_human" \
-        '. + [{"label": $label, "folders": $folders, "size_bytes": $size_bytes, "size": $size}]')
+    CODEC_JSON=$(echo "$CODEC_JSON" | jq --arg lbl "$codec" --argjson folders "$count" --argjson sb "$size_bytes" --arg sz "$size_human" \
+        '. + [{"label": $lbl, "folders": $folders, "size_bytes": $sb, "size": $sz}]')
 done
 for codec in "${!CODEC_COUNTS[@]}"; do
     case "$codec" in HEVC|H264|AV1|Unknown) continue ;; esac
     count=${CODEC_COUNTS[$codec]}
     size_bytes=${CODEC_SIZES[$codec]:-0}
     size_human=$(format_size "$size_bytes")
-    CODEC_JSON=$(echo "$CODEC_JSON" | jq --arg label "$codec" --argjson folders "$count" --argjson size_bytes "$size_bytes" --arg size "$size_human" \
-        '. + [{"label": $label, "folders": $folders, "size_bytes": $size_bytes, "size": $size}]')
+    CODEC_JSON=$(echo "$CODEC_JSON" | jq --arg lbl "$codec" --argjson folders "$count" --argjson sb "$size_bytes" --arg sz "$size_human" \
+        '. + [{"label": $lbl, "folders": $folders, "size_bytes": $sb, "size": $sz}]')
 done
 
 # Resolution bucket helper for items
