@@ -176,7 +176,7 @@ Creates a zip archive of all critical configs and scripts. Output filename: `<ho
 <details>
 <summary><strong>archive-reports.sh</strong> — daily report archiver</summary>
 
-Copies new or changed markdown reports to the archive location with date-stamped filenames. Only archives when content has actually changed.
+Copies new or changed reports (JSON and markdown) to the archive location with date-stamped filenames. Only archives when content has actually changed.
 
 #### Config keys used
 
@@ -186,7 +186,8 @@ Copies new or changed markdown reports to the archive location with date-stamped
 
 - Reads reports from `output.reports` directory
 - Archives to `backup.reports` in per-report subdirectories
-- Filenames: `<report-name>-YYYY-MM-DD.md`
+- Filenames: `<report-name>-YYYY-MM-DD.json`
+- Extracts report date from JSON `generated` field via jq
 - Skips unchanged reports (diff comparison against latest archived copy)
 - Checks that the archive mount is available before writing
 
@@ -195,7 +196,7 @@ Copies new or changed markdown reports to the archive location with date-stamped
 <details>
 <summary><strong>library-catalog.sh</strong> — library snapshot with diff tracking</summary>
 
-Generates a full markdown listing of all movies and TV shows. Compares against the previous run to highlight additions and removals.
+Generates a structured JSON catalog of all movies and TV shows. Compares against the previous run to highlight additions and removals.
 
 #### Config keys used
 
@@ -203,9 +204,17 @@ Generates a full markdown listing of all movies and TV shows. Compares against t
 
 #### Output
 
-- Report: `reports/library-catalog.md` (overwritten each run)
-- Previous: `reports/library-catalog.prev.md` (for diffing)
+- Report: `reports/library-catalog.json` (overwritten each run)
+- Previous: `reports/library-catalog.prev.json` (for diffing)
 - Discord: library totals + changes since last run
+
+#### Features
+
+- Structured movie/show objects with year and size
+- Decade distribution
+- Season detail per show
+- Added date tracking
+- Recently added section
 
 </details>
 
@@ -218,12 +227,24 @@ Checks Kometa metadata YAML files against actual library content. Finds orphaned
 
 `tools.kometa` (metadata dir derived), `media.*`
 
+#### Output
+
+- Report: `reports/metadata-audit.json` (overwritten each run)
+
 #### What it checks
 
 - Orphaned metadata (entries for content not in library)
 - Missing metadata (library items without custom entries)
 - Duplicate entries across files
 - Season/episode coverage gaps
+
+#### Features
+
+- Structured entries with TMDb IDs and links
+- Severity levels and action suggestions
+- Coverage percentages
+- Per-source breakdown
+- Last-clean date tracking
 
 #### Dependencies
 
@@ -239,6 +260,17 @@ Scans for non-HEVC/non-AV1 files and generates a prioritized re-encode list sort
 #### Config keys used
 
 `media.*`
+
+#### Output
+
+- Report: `reports/encode-queue.json` (overwritten each run)
+
+#### Features
+
+- HDR detection
+- Batch grouping
+- Savings by codec breakdown
+- Exclude list support (`encode-exclude.txt`)
 
 #### Usage
 
@@ -262,6 +294,17 @@ Scans a media directory and generates a detailed storage report. Auto-detects TV
 #### Config keys used
 
 `media.tv` (default scan directory)
+
+#### Output
+
+- Report: `reports/storage-report.json` (overwritten each run)
+
+#### Features
+
+- Per-library percentage breakdown
+- Resolution buckets per item
+- Top 10 by size
+- Human-readable sizes
 
 #### Usage
 
@@ -410,7 +453,8 @@ Control which messages are sent via `notifications.on_success` and `notification
 │   ├── healthcheck/
 │   ├── maintenance/
 │   └── ...
-└── reports/                # Generated markdown reports (gitignored)
+├── encode-exclude.txt      # Encode queue exclusion patterns
+└── reports/                # Generated JSON reports (gitignored)
 ```
 
 ---
