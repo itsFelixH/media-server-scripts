@@ -496,4 +496,3 @@ Control which messages are sent via `notifications.on_success` and `notification
 - [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) — Upcoming movies/TV shows + status overlays
 - [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) — Syncs Plex watch history and ratings with Trakt
 - [ImageMaid](https://github.com/Kometa-Team/ImageMaid) — Plex image cleanup and DB optimization
-- [WTWP](https://github.com/netplexflix/What-to-watch-on-Plex) — Group swiping app to decide what to watch
