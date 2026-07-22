@@ -328,11 +328,16 @@ if [ "$TODAY" != "$_last_content_check" ] || [ ! -f "$DATA_DIR/.upcoming.json" ]
     if [ "$_content_hash" != "$_cached_hash" ]; then
         _get_poster() {
             local rkey="$1" mtype="$2"
-            local tmdb_id poster
-            tmdb_id=$(curl -s --max-time 5 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[0].Guid[]?.id' | grep "tmdb://" | sed 's|tmdb://||')
-            [ -z "$tmdb_id" ] && return
-            poster=$(curl -s --max-time 5 "https://api.themoviedb.org/3/${mtype}/${tmdb_id}?api_key=$TMDB_KEY" 2>/dev/null | jq -r '.poster_path // empty')
-            [ -n "$poster" ] && echo "https://image.tmdb.org/t/p/w200${poster}"
+            local tmdb_id poster plex_meta
+            plex_meta=$(curl -s --max-time 5 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null)
+            tmdb_id=$(echo "$plex_meta" | jq -r '.MediaContainer.Metadata[0].Guid[]?.id' | grep "tmdb://" | sed 's|tmdb://||')
+            if [ -n "$tmdb_id" ]; then
+                poster=$(curl -s --max-time 5 "https://api.themoviedb.org/3/${mtype}/${tmdb_id}?api_key=$TMDB_KEY" 2>/dev/null | jq -r '.poster_path // empty')
+                [ -n "$poster" ] && echo "https://image.tmdb.org/t/p/w200${poster}" && return
+            fi
+            # Fallback: use Plex thumb directly
+            local thumb=$(echo "$plex_meta" | jq -r '.MediaContainer.Metadata[0].thumb // empty')
+            [ -n "$thumb" ] && echo "${PLEX_URL}${thumb}?X-Plex-Token=${PLEX_TOKEN}&width=200&height=300"
         }
 
         # Upcoming Movies
