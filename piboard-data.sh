@@ -326,21 +326,16 @@ if [ "$TODAY" != "$_last_content_check" ] || [ ! -f "$DATA_DIR/.upcoming.json" ]
     echo "$TODAY" > "$CONTENT_CHECK"
 
     if [ "$_content_hash" != "$_cached_hash" ]; then
-        _last_tmdb_url=""
         _get_poster() {
             local rkey="$1" mtype="$2"
             local tmdb_id poster plex_meta
-            _last_tmdb_url=""
-            plex_meta=$(curl -s --max-time 5 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null)
+            echo -n "" > "$DATA_DIR/.last_tmdb_url"
+            plex_meta=$(curl -s --max-time 8 "$PLEX_URL/library/metadata/$rkey?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null)
             tmdb_id=$(echo "$plex_meta" | jq -r '.MediaContainer.Metadata[0].Guid[]?.id' | grep "tmdb://" | sed 's|tmdb://||')
             if [ -n "$tmdb_id" ]; then
-                if [ "$mtype" = "movie" ]; then
-                    _last_tmdb_url="https://www.themoviedb.org/movie/${tmdb_id}"
-                else
-                    _last_tmdb_url="https://www.themoviedb.org/tv/${tmdb_id}"
-                fi
+                [ "$mtype" = "movie" ] && echo -n "https://www.themoviedb.org/movie/${tmdb_id}" > "$DATA_DIR/.last_tmdb_url" || echo -n "https://www.themoviedb.org/tv/${tmdb_id}" > "$DATA_DIR/.last_tmdb_url"
                 poster=$(curl -s --max-time 5 "https://api.themoviedb.org/3/${mtype}/${tmdb_id}?api_key=$TMDB_KEY" 2>/dev/null | jq -r '.poster_path // empty')
-                [ -n "$poster" ] && echo "https://image.tmdb.org/t/p/w200${poster}" && return
+                [ -n "$poster" ] && { echo "https://image.tmdb.org/t/p/w200${poster}"; return; }
             fi
             # Fallback: use Plex thumb directly
             local thumb=$(echo "$plex_meta" | jq -r '.MediaContainer.Metadata[0].thumb // empty')
@@ -353,7 +348,8 @@ if [ "$TODAY" != "$_last_content_check" ] || [ ! -f "$DATA_DIR/.upcoming.json" ]
         [ -n "$_mov_col" ] && while IFS=$'\t' read -r title year rkey date; do
             [ -z "$rkey" ] && continue
             p=$(_get_poster "$rkey" "movie")
-            _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title ($year)" --arg p "${p:-}" --arg t "movie" --arg d "${date:-}" --arg u "${_last_tmdb_url:-}" '. + [{name:$n,poster:$p,type:$t,date:$d,url:$u}]')
+            u=$(cat "$DATA_DIR/.last_tmdb_url" 2>/dev/null)
+            _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title ($year)" --arg p "${p:-}" --arg t "movie" --arg d "${date:-}" --arg u "${u:-}" '. + [{name:$n,poster:$p,type:$t,date:$d,url:$u}]')
         done < <(curl -s --max-time 5 "$PLEX_URL/library/collections/$_mov_col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.year)\t\(.ratingKey)\t\(.originallyAvailableAt // "")"')
 
         # Upcoming TV
@@ -361,7 +357,8 @@ if [ "$TODAY" != "$_last_content_check" ] || [ ! -f "$DATA_DIR/.upcoming.json" ]
         [ -n "$_tv_col" ] && while IFS=$'\t' read -r title rkey date; do
             [ -z "$rkey" ] && continue
             p=$(_get_poster "$rkey" "tv")
-            _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "tv" --arg d "${date:-}" --arg u "${_last_tmdb_url:-}" '. + [{name:$n,poster:$p,type:$t,date:$d,url:$u}]')
+            u=$(cat "$DATA_DIR/.last_tmdb_url" 2>/dev/null)
+            _upcoming_json=$(echo "$_upcoming_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "tv" --arg d "${date:-}" --arg u "${u:-}" '. + [{name:$n,poster:$p,type:$t,date:$d,url:$u}]')
         done < <(curl -s --max-time 5 "$PLEX_URL/library/collections/$_tv_col/children?X-Plex-Token=$PLEX_TOKEN" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)\t\(.ratingKey)\t\(.originallyAvailableAt // "")"')
         echo "$_upcoming_json" > "$DATA_DIR/.upcoming.json"
 
@@ -376,10 +373,12 @@ if [ "$TODAY" != "$_last_content_check" ] || [ ! -f "$DATA_DIR/.upcoming.json" ]
                 echo "$_seen" | grep -q "$gp_rkey" && continue
                 _seen="$_seen $gp_rkey"
                 p=$(_get_poster "$gp_rkey" "tv")
-                _recent_json=$(echo "$_recent_json" | jq --arg n "$gp_title" --arg p "${p:-}" --arg t "tv" --arg u "${_last_tmdb_url:-}" '. + [{name:$n,poster:$p,type:$t,url:$u}]')
+                u=$(cat "$DATA_DIR/.last_tmdb_url" 2>/dev/null)
+                _recent_json=$(echo "$_recent_json" | jq --arg n "$gp_title" --arg p "${p:-}" --arg t "tv" --arg u "${u:-}" '. + [{name:$n,poster:$p,type:$t,url:$u}]')
             else
                 p=$(_get_poster "$rkey" "movie")
-                _recent_json=$(echo "$_recent_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "movie" --arg u "${_last_tmdb_url:-}" '. + [{name:$n,poster:$p,type:$t,url:$u}]')
+                u=$(cat "$DATA_DIR/.last_tmdb_url" 2>/dev/null)
+                _recent_json=$(echo "$_recent_json" | jq --arg n "$title" --arg p "${p:-}" --arg t "movie" --arg u "${u:-}" '. + [{name:$n,poster:$p,type:$t,url:$u}]')
             fi
         done < <(curl -s --max-time 5 "$PLEX_URL/status/sessions/history/all?X-Plex-Token=$PLEX_TOKEN&sort=viewedAt:desc&limit=30&accountID=1" -H "Accept: application/json" 2>/dev/null | jq -r '.MediaContainer.Metadata[] | "\(.title)§\(.type)§\(.grandparentTitle // "NONE")§\(.ratingKey)"')
         echo "$_recent_json" > "$DATA_DIR/.recent.json"
