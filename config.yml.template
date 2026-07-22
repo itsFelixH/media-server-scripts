@@ -46,7 +46,6 @@ tools:
   compose_files:                      # Docker compose files to include in backups
     - ~/docker/kometa/docker-compose.yml
     - ~/docker/umtk/docker-compose.yml
-    - ~/docker/wtwp/docker-compose.yml
     - ~/docker/imagemaid/docker-compose.yml
 
 # Where scripts write their output
@@ -76,7 +75,6 @@ services:
   docker_containers:                  # Docker containers to monitor/restart
     - kometa
     - umtk
-    - wtwp
     - imagemaid
 
 
