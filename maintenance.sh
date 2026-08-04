@@ -121,18 +121,7 @@ system_maintenance() {
 # Update media tools
 update_media_tools() {
     echo "---- MEDIA TOOLS UPDATE ----"
-    
-    # Update PlexTraktSync
-    if command -v plextraktsync &>/dev/null; then
-        if plextraktsync self-update; then
-            echo "[✓] PlexTraktSync updated successfully"
-        else
-            echo "ERROR: Failed to update PlexTraktSync"
-            notify "PlexTraktSync update failed" "error"
-        fi
-    else
-        echo "WARNING: plextraktsync not found in PATH"
-    fi
+    echo "[✓] No pip-based media tools to update (Floppy runs as Docker container)"
 }
 
 # Update Docker containers
@@ -258,10 +247,6 @@ disk_maintenance() {
     # Cleanup old script logs across all subdirectories (older than retention period)
     local deleted=$(find "$LOG_DIR" -type f -name "*.log" -mtime +$RETENTION_LOGS_DAYS -delete -print 2>/dev/null | wc -l)
     echo "[✓] Cleaned $deleted old script log file(s)"
-
-    # Cleanup old PlexTraktSync daily logs (shorter retention)
-    local pts_deleted=$(find "$LOG_DIR/plextraktsync" -type f -name "*.log" -mtime +$RETENTION_PTS_DAYS -delete -print 2>/dev/null | wc -l)
-    echo "[✓] Cleaned $pts_deleted old PlexTraktSync log file(s)"
 
     # Cleanup old Kometa logs
     find "$BASE_PATH/logs" -type f -name "*.log" -mtime +$RETENTION_LOGS_DAYS -delete 2>/dev/null
@@ -398,7 +383,8 @@ check_network() {
     echo "---- NETWORK CONNECTIVITY ----"
     # Test specific services
     curl -s --max-time 5 https://api.themoviedb.org >/dev/null && echo "[✓] TMDB API reachable" || echo "[✗] TMDB API unreachable"
-    curl -s --max-time 5 https://api.trakt.tv >/dev/null && echo "[✓] Trakt API reachable" || echo "[✗] Trakt API unreachable"
+    curl -s --max-time 5 https://api.simkl.com >/dev/null && echo "[✓] Simkl API reachable" || echo "[✗] Simkl API unreachable"
+    curl -s -o /dev/null --max-time 5 -L http://localhost:8000/ && echo "[✓] Floppy reachable" || echo "[✗] Floppy unreachable"
     nslookup example.com >/dev/null 2>&1 && echo "[✓] DNS resolution OK" || echo "[✗] DNS resolution failed"
 }
 
