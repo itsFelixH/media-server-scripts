@@ -149,6 +149,14 @@ fi
 echo "Collecting crontab..."
 crontab -l > "$TEMP_DIR/crontab.txt" 2>/dev/null
 
+# --- Floppy database ---
+FLOPPY_DB="$HOME/docker/floppy/data/db.sqlite3"
+if [ -f "$FLOPPY_DB" ]; then
+    echo "Collecting Floppy database..."
+    mkdir -p "$TEMP_DIR/docker/floppy"
+    cp "$FLOPPY_DB" "$TEMP_DIR/docker/floppy/" 2>/dev/null
+fi
+
 echo
 
 # Create main config backup zip
