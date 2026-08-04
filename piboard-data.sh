@@ -81,7 +81,7 @@ if cache_stale "$SERVICES_CACHE" 300; then
 
     # Containers
     _ctr_json="[]"
-    for ctr in "${DOCKER_CONTAINERS[@]}" piboard; do
+    for ctr in "${DOCKER_CONTAINERS[@]}" piboard floppy-redis; do
         status=$(docker inspect --format='{{.State.Status}}' "$ctr" 2>/dev/null || echo "not found")
         health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$ctr" 2>/dev/null || echo "unknown")
         _ctr_json=$(echo "$_ctr_json" | jq --arg n "$ctr" --arg s "$status" --arg h "$health" '. + [{"name":$n,"status":$s,"health":$h}]')
@@ -106,11 +106,6 @@ if cache_stale "$SERVICES_CACHE" 300; then
     [ -f "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log" ] && {
         _t=$(stat -c '%Y' "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log")
         _add_lr "ImageMaid" "$_t"
-    }
-    _pl=$(ls -t "$LOG_DIR/plextraktsync"/plextraktsync_*.log 2>/dev/null | head -1)
-    [ -n "$_pl" ] && {
-        _t=$(stat -c '%Y' "$_pl")
-        _add_lr "PlexTraktSync" "$_t"
     }
     # Script-based last runs (from log directories)
     for _sname in healthcheck backup archive-reports maintenance library-catalog metadata-audit encode-queue storage-report media-analyzer; do
@@ -444,7 +439,6 @@ if cache_stale "$SCHED_CACHE" 300; then
         _task_name="" _cat="script" _desc=""
         case "$_rest" in
             *healthcheck.sh*)    _task_name="Health Check"; _cat="monitoring" ;;
-            *plextraktsync*)     _task_name="Plex Trakt Sync"; _cat="sync" ;;
             *backup.sh*)         _task_name="Backup"; _desc="Backs up all configs to /mnt/Media/backups/" ;;
             *maintenance.sh*)    _task_name="Maintenance"; _desc="System updates, Docker updates, config validation, log rotation" ;;
             *library-catalog.sh*) _task_name="Library Catalog"; _desc="Snapshots library content, diffs against previous run" ;;
