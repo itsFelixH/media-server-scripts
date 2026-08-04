@@ -207,19 +207,23 @@ else
     ISSUES+=("Kometa log file not found")
 fi
 
-# Check PlexTraktSync last run (should have run within threshold)
-pts_today="$LOG_DIR/plextraktsync/plextraktsync_$(date +%Y%m%d).log"
-if [ -f "$pts_today" ]; then
-    pts_age=$(find "$pts_today" -mmin -$THRESH_TASK_STALE_MIN 2>/dev/null | head -1)
-    if [ -z "$pts_age" ]; then
-        ISSUES+=("PlexTraktSync has not run in over 26 hours")
-    fi
-else
-    # Check if any recent log exists in the PTS directory
-    pts_latest=$(find "$LOG_DIR/plextraktsync" -type f -name "*.log" -mmin -$THRESH_TASK_STALE_MIN 2>/dev/null | head -1)
-    if [ -z "$pts_latest" ]; then
-        ISSUES+=("PlexTraktSync has not run in over 26 hours")
-    fi
+# Check Floppy container is running
+floppy_status=$(docker inspect --format='{{.State.Status}}' floppy 2>/dev/null || echo "not found")
+if [ "$floppy_status" != "running" ]; then
+    ISSUES+=("Floppy container is not running (status: $floppy_status)")
+fi
+
+# Check webhook endpoints are reachable
+# Floppy (local — root URL returns 200 after redirect)
+floppy_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -L "http://localhost:8000/" 2>/dev/null)
+if [ -z "$floppy_http" ] || [ "${floppy_http:0:1}" = "5" ] || [ "$floppy_http" = "000" ]; then
+    ISSUES+=("Floppy web UI unreachable (HTTP $floppy_http)")
+fi
+
+# Simkl (external — just verify the API host responds)
+simkl_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "https://api.simkl.com" 2>/dev/null)
+if [ -z "$simkl_http" ] || [ "${simkl_http:0:1}" = "5" ] || [ "$simkl_http" = "000" ]; then
+    ISSUES+=("Simkl API unreachable (HTTP $simkl_http)")
 fi
 
 # --- Report results ---
