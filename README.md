@@ -9,7 +9,8 @@ Maintenance and monitoring scripts for a [Plex](https://www.plex.tv/) media serv
 | [Plex](https://www.plex.tv/) | Media streaming server | Always running | [Support](https://support.plex.tv/) |
 | [Kometa](https://github.com/Kometa-Team/Kometa) | Metadata, collections, and overlay management for Plex | Daily at 05:00 (internal scheduler) | [Wiki](https://kometa.wiki/en/latest/) |
 | [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) | Upcoming movies/TV shows + TV show status overlays for Kometa | Daily at 02:00 (Docker internal cron) | [Docs](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) |
-| [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) | Syncs Plex watch history and ratings with Trakt | Always running (systemd) | [Docs](https://github.com/Taxel/PlexTraktSync) |
+| [Floppy](https://github.com/dannyvfilms/Floppy) | Self-hosted media tracker (Trakt alternative) | Always running (Docker) | [GitHub](https://github.com/dannyvfilms/Floppy) |
+| [Simkl](https://simkl.com/) | External media tracker (cloud) | Always running (Plex webhook) | [Docs](https://simkl.com/apps/plex/) |
 | [ImageMaid](https://github.com/Kometa-Team/ImageMaid) | Plex metadata image cleanup and DB optimization | Weekly Sundays at 07:00 (Docker internal) | [GitHub](https://github.com/Kometa-Team/ImageMaid) |
 | [Radarr](https://radarr.video/) | Movie management and downloads | Always running (systemd) | |
 | [Sonarr](https://sonarr.tv/) | TV show management and downloads | Always running (systemd) | |
@@ -107,7 +108,7 @@ Runs silently. Only alerts Discord when something is wrong. Auto-restarts failed
 - Plex API responding + token valid
 - Radarr/Sonarr API responding (skipped if keys empty)
 - Internet + TMDb reachability
-- UMTK, Kometa, PlexTraktSync last run times
+- UMTK, Kometa, Floppy container status
 
 #### Behavior
 
@@ -131,7 +132,7 @@ Interactive menu with 11 maintenance tasks. Also runs unattended via `--schedule
 
 ```
  1: System Maintenance       (apt update/upgrade/autoremove)
- 2: Update Media Tools       (PlexTraktSync self-update)
+ 2: Update Media Tools       (no pip tools — all Docker-based now)
  3: Update Docker Containers (pull latest images, restart)
  4: Restart Services         (Plex, arr services, Docker containers)
  5: Disk Maintenance         (clean old logs, show usage)
@@ -494,5 +495,6 @@ Control which messages are sent via `notifications.on_success` and `notification
 
 - [Kometa](https://github.com/Kometa-Team/Kometa) — Metadata, collections, and overlays for Plex
 - [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) — Upcoming movies/TV shows + status overlays
-- [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) — Syncs Plex watch history and ratings with Trakt
+- [Floppy](https://github.com/dannyvfilms/Floppy) — Self-hosted media tracker (Trakt alternative)
+- [Simkl](https://simkl.com/) — External media tracker (cloud, syncs via Plex webhook)
 - [ImageMaid](https://github.com/Kometa-Team/ImageMaid) — Plex image cleanup and DB optimization
