@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""
+piboard-api.py — Lightweight HTTP API for PiBoard action buttons.
+
+Runs on the host, accepts POST requests to trigger allowlisted scripts,
+tracks running jobs, and returns status. LAN-only, no auth.
+
+Endpoints:
+    GET  /api/actions/tasks       → list of available tasks with current status
+    POST /api/actions/run/<name>  → trigger a task, returns job ID
+    GET  /api/actions/job/<id>    → check job status (running/done/failed + exit code)
+    POST /api/actions/stop/<id>   → kill a running job
+
+Port: 5052 (proxied through nginx at /api/actions/)
+"""
+
+import json
+import os
+import subprocess
+import threading
+import time
+import uuid
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+
+# ===== CONFIGURATION =====
+
+HOST = "0.0.0.0"
+PORT = 5052
+SCRIPTS_DIR = Path.home() / "kometa" / "scripts"
+
+# Allowlist: name → {script, args, description, category}
+# Only these can be triggered from the frontend.
+ALLOWED_TASKS = {
+    "healthcheck": {
+        "script": "healthcheck.sh",
+        "args": [],
+        "description": "Run health check",
+        "category": "monitoring",
+    },
+    "backup": {
+        "script": "backup.sh",
+        "args": [],
+        "description": "Backup all configs",
+        "category": "script",
+    },
+    "maintenance": {
+        "script": "maintenance.sh",
+        "args": ["--scheduled"],
+        "description": "System maintenance",
+        "category": "script",
+    },
+    "library-catalog": {
+        "script": "library-catalog.sh",
+        "args": ["--quiet"],
+        "description": "Snapshot library content",
+        "category": "script",
+    },
+    "metadata-audit": {
+        "script": "metadata-audit.sh",
+        "args": ["--quiet"],
+        "description": "Validate metadata",
+        "category": "script",
+    },
+    "encode-queue": {
+        "script": "encode-queue.sh",
+        "args": ["--quiet"],
+        "description": "Generate encode queue",
+        "category": "script",
+    },
+    "storage-report": {
+        "script": "storage-report.sh",
+        "args": ["--quiet"],
+        "description": "Storage usage report",
+        "category": "script",
+    },
+    "episode-gaps": {
+        "script": "episode-gaps.sh",
+        "args": ["--quiet"],
+        "description": "Find missing episodes",
+        "category": "script",
+    },
+    "archive-reports": {
+        "script": "archive-reports.sh",
+        "args": ["--quiet"],
+        "description": "Archive reports",
+        "category": "script",
+    },
+    "plex-vs-arrs": {
+        "script": "plex-vs-arrs.sh",
+        "args": ["--quiet"],
+        "description": "Compare Plex vs ARRs",
+        "category": "script",
+    },
+}
+
+# ===== JOB TRACKER =====
+
+jobs = {}  # job_id → {name, status, start_time, end_time, exit_code, pid}
+jobs_lock = threading.Lock()
+
+# Prevent running the same task concurrently
+running_tasks = set()
+running_lock = threading.Lock()
+
+
+def run_task(job_id, name, task):
+    """Execute a task in a subprocess and track its status."""
+    script_path = SCRIPTS_DIR / task["script"]
+    cmd = ["bash", str(script_path)] + task["args"]
+
+    try:
+        # Inherit user environment (PATH, HOME, etc.) for scripts that need it
+        env = os.environ.copy()
+        env["HOME"] = str(Path.home())
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(SCRIPTS_DIR),
+            env=env,
+        )
+
+        with jobs_lock:
+            jobs[job_id]["pid"] = proc.pid
+            jobs[job_id]["status"] = "running"
+
+        proc.wait()
+
+        with jobs_lock:
+            jobs[job_id]["status"] = "done" if proc.returncode == 0 else "failed"
+            jobs[job_id]["exit_code"] = proc.returncode
+            jobs[job_id]["end_time"] = time.time()
+
+    except Exception as e:
+        with jobs_lock:
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["error"] = str(e)
+            jobs[job_id]["end_time"] = time.time()
+
+    finally:
+        with running_lock:
+            running_tasks.discard(name)
+
+
+def cleanup_old_jobs():
+    """Remove jobs older than 1 hour to prevent memory growth."""
+    now = time.time()
+    with jobs_lock:
+        expired = [
+            jid for jid, job in jobs.items()
+            if job.get("end_time") and (now - job["end_time"]) > 3600
+        ]
+        for jid in expired:
+            del jobs[jid]
+
+
+# ===== HTTP HANDLER =====
+
+class APIHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Suppress default access logs (noisy for cron-like polling)
+        pass
+
+    def send_json(self, status, data):
+        body = json.dumps(data).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_json(200, {})
+
+    def do_GET(self):
+        path = self.path.rstrip("/")
+
+        # List available tasks
+        if path == "/api/actions/tasks":
+            cleanup_old_jobs()
+            task_list = []
+            for name, task in ALLOWED_TASKS.items():
+                with running_lock:
+                    is_running = name in running_tasks
+                task_list.append({
+                    "name": name,
+                    "description": task["description"],
+                    "category": task["category"],
+                    "running": is_running,
+                })
+            self.send_json(200, {"tasks": task_list})
+            return
+
+        # Job status
+        if path.startswith("/api/actions/job/"):
+            job_id = path.split("/")[-1]
+            with jobs_lock:
+                job = jobs.get(job_id)
+            if not job:
+                self.send_json(404, {"error": "Job not found"})
+                return
+            self.send_json(200, {
+                "id": job_id,
+                "name": job["name"],
+                "status": job["status"],
+                "start_time": job["start_time"],
+                "end_time": job.get("end_time"),
+                "exit_code": job.get("exit_code"),
+                "duration": round(
+                    (job.get("end_time") or time.time()) - job["start_time"], 1
+                ),
+            })
+            return
+
+        self.send_json(404, {"error": "Not found"})
+
+    def do_POST(self):
+        path = self.path.rstrip("/")
+
+        # Trigger a task
+        if path.startswith("/api/actions/run/"):
+            name = path.split("/")[-1]
+
+            if name not in ALLOWED_TASKS:
+                self.send_json(400, {"error": f"Unknown task: {name}"})
+                return
+
+            task = ALLOWED_TASKS[name]
+            script_path = SCRIPTS_DIR / task["script"]
+
+            if not script_path.exists():
+                self.send_json(500, {"error": f"Script not found: {task['script']}"})
+                return
+
+            with running_lock:
+                if name in running_tasks:
+                    self.send_json(409, {"error": "Task already running", "name": name})
+                    return
+                running_tasks.add(name)
+
+            job_id = str(uuid.uuid4())[:8]
+            with jobs_lock:
+                jobs[job_id] = {
+                    "name": name,
+                    "status": "starting",
+                    "start_time": time.time(),
+                    "end_time": None,
+                    "exit_code": None,
+                    "pid": None,
+                }
+
+            thread = threading.Thread(
+                target=run_task, args=(job_id, name, task), daemon=True
+            )
+            thread.start()
+
+            self.send_json(202, {
+                "id": job_id,
+                "name": name,
+                "status": "starting",
+                "message": f"Started {task['description']}",
+            })
+            return
+
+        # Stop a running job
+        if path.startswith("/api/actions/stop/"):
+            job_id = path.split("/")[-1]
+            with jobs_lock:
+                job = jobs.get(job_id)
+
+            if not job:
+                self.send_json(404, {"error": "Job not found"})
+                return
+
+            if job["status"] != "running":
+                self.send_json(400, {"error": "Job not running"})
+                return
+
+            pid = job.get("pid")
+            if pid:
+                try:
+                    os.kill(pid, 15)  # SIGTERM
+                    self.send_json(200, {"message": "Stop signal sent", "id": job_id})
+                except ProcessLookupError:
+                    self.send_json(200, {"message": "Process already exited", "id": job_id})
+            else:
+                self.send_json(400, {"error": "No PID available"})
+            return
+
+        self.send_json(404, {"error": "Not found"})
+
+
+# ===== MAIN =====
+
+def main():
+    server = HTTPServer((HOST, PORT), APIHandler)
+    print(f"PiBoard API listening on {HOST}:{PORT}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down.")
+        server.shutdown()
+
+
+if __name__ == "__main__":
+    main()
