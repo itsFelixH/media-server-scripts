@@ -9,7 +9,7 @@ Maintenance and monitoring scripts for a [Plex](https://www.plex.tv/) media serv
 | [Plex](https://www.plex.tv/) | Media streaming server | Always running | [Support](https://support.plex.tv/) |
 | [Kometa](https://github.com/Kometa-Team/Kometa) | Metadata, collections, and overlay management for Plex | Daily at 05:00 (internal scheduler) | [Wiki](https://kometa.wiki/en/latest/) |
 | [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) | Upcoming movies/TV shows + TV show status overlays for Kometa | Daily at 02:00 (Docker internal cron) | [Docs](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) |
-| [Floppy](https://github.com/dannyvfilms/Floppy) | Self-hosted media tracker (Trakt alternative) | Always running (Docker) | [GitHub](https://github.com/dannyvfilms/Floppy) |
+| [Floppy](https://github.com/dannyvfilms/Floppy) | Self-hosted media tracker | Always running (Docker) | [GitHub](https://github.com/dannyvfilms/Floppy) |
 | [Simkl](https://simkl.com/) | External media tracker (cloud) | Always running (Plex webhook) | [Docs](https://simkl.com/apps/plex/) |
 | [ImageMaid](https://github.com/Kometa-Team/ImageMaid) | Plex metadata image cleanup and DB optimization | Weekly Sundays at 07:00 (Docker internal) | [GitHub](https://github.com/Kometa-Team/ImageMaid) |
 | [Radarr](https://radarr.video/) | Movie management and downloads | Always running (systemd) | |
@@ -58,6 +58,7 @@ bash healthcheck.sh
 | `library-catalog.sh` | Snapshot library contents with diff tracking | Sundays 01:30 |
 | `metadata-audit.sh` | Validate metadata files against library | Sundays 02:00 |
 | `encode-queue.sh` | Find re-encoding candidates | 1st of month |
+| `episode-gaps.sh` | Find TV shows with missing episodes vs TMDB | Sundays 03:00 |
 | `storage-report.sh` | Disk usage breakdown by folder/codec/resolution (both libraries) | 28th of month |
 | `plex-vs-arrs.sh` | Compare Plex library against Radarr/Sonarr | Sundays 02:30 |
 | `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
@@ -138,7 +139,7 @@ Interactive menu with 11 maintenance tasks. Also runs unattended via `--schedule
  5: Disk Maintenance         (clean old logs, show usage)
  6: Health Check             (services, disk, memory, load, connectivity)
  7: Temperature Check        (thermal zones)
- 8: Network Check            (TMDb, Trakt, DNS)
+ 8: Network Check            (TMDb, Simkl, DNS)
  9: Process Monitor          (zombies, top CPU)
 10: Config Validation        (YAML syntax for all configs)
 11: Token Consistency Check  (compare Plex token across configs)
@@ -289,6 +290,41 @@ Scans for non-HEVC/non-AV1 files and generates a prioritized re-encode list sort
 </details>
 
 <details>
+<summary><strong>episode-gaps.sh</strong> — find TV shows with missing episodes</summary>
+
+Compares Plex TV show episode counts against TMDB aired episodes. Reports shows where you have fewer episodes than have actually aired. Ignores specials (Season 0) and unaired future episodes.
+
+#### Config keys used
+
+`plex.url`, `plex.token` (Plex API), TMDb API key (hardcoded, same as Kometa)
+
+#### Output
+
+- Report: `reports/episode-gaps.json` (overwritten each run)
+
+#### Features
+
+- Filters by air date (only counts aired episodes)
+- Ignores specials/Season 0
+- Per-season breakdown of missing episodes
+- TMDB links for each show
+- Health status based on gap count
+
+#### Usage
+
+```bash
+./episode-gaps.sh                    # Full run with Discord
+./episode-gaps.sh --quiet            # For cron
+./episode-gaps.sh --no-discord       # No notifications
+```
+
+#### Dependencies
+
+`jq`, `curl`
+
+</details>
+
+<details>
 <summary><strong>storage-report.sh</strong> — disk usage by folder, codec, resolution</summary>
 
 Scans a media directory and generates a detailed storage report. Auto-detects TV (show/season) vs Movies (flat) structure. Compares against previous run. When no directory is specified, scans both TV Shows and Movies and produces a combined report.
@@ -421,6 +457,9 @@ Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa
 # Plex vs ARRs comparison (Sundays 02:30)
 30 2 * * 0 bash ~/kometa/scripts/plex-vs-arrs.sh --quiet
 
+# Episode gaps (Sundays 03:00)
+0 3 * * 0 bash ~/kometa/scripts/episode-gaps.sh --quiet
+
 # Scheduled maintenance (Mondays 03:00)
 0 3 * * 1 bash ~/kometa/scripts/maintenance.sh --scheduled
 
@@ -479,6 +518,7 @@ Control which messages are sent via `notifications.on_success` and `notification
 ├── media-analyzer.sh
 ├── storage-report.sh
 ├── encode-queue.sh
+├── episode-gaps.sh
 ├── logs/                   # Per-script log subdirectories (gitignored)
 │   ├── archive-reports/
 │   ├── backup/
@@ -495,6 +535,6 @@ Control which messages are sent via `notifications.on_success` and `notification
 
 - [Kometa](https://github.com/Kometa-Team/Kometa) — Metadata, collections, and overlays for Plex
 - [UMTK](https://github.com/netplexflix/Upcoming-Movies-TV-Shows-for-Kometa) — Upcoming movies/TV shows + status overlays
-- [Floppy](https://github.com/dannyvfilms/Floppy) — Self-hosted media tracker (Trakt alternative)
+- [Floppy](https://github.com/dannyvfilms/Floppy) — Self-hosted media tracker
 - [Simkl](https://simkl.com/) — External media tracker (cloud, syncs via Plex webhook)
 - [ImageMaid](https://github.com/Kometa-Team/ImageMaid) — Plex image cleanup and DB optimization
