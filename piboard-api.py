@@ -2,7 +2,7 @@
 """
 piboard-api.py — Lightweight HTTP API for PiBoard action buttons.
 
-Runs on the host, accepts POST requests to trigger allowlisted scripts,
+Runs on the host, accepts POST requests to trigger allowlisted scripts/commands,
 tracks running jobs, and returns status. LAN-only, no auth.
 
 Endpoints:
@@ -28,69 +28,201 @@ from pathlib import Path
 HOST = "0.0.0.0"
 PORT = 5052
 SCRIPTS_DIR = Path.home() / "kometa" / "scripts"
+DOCKER_DIR = Path.home() / "docker"
 
-# Allowlist: name → {script, args, description, category}
+# Allowlist: name → task definition
+# Types:
+#   "script"  — runs: bash <SCRIPTS_DIR>/<script> <args>
+#   "command" — runs: the exact shell command (via bash -c)
+#
 # Only these can be triggered from the frontend.
+
 ALLOWED_TASKS = {
+    # --- Maintenance scripts ---
     "healthcheck": {
+        "type": "script",
         "script": "healthcheck.sh",
         "args": [],
         "description": "Run health check",
         "category": "monitoring",
     },
     "backup": {
+        "type": "script",
         "script": "backup.sh",
         "args": [],
         "description": "Backup all configs",
         "category": "script",
     },
     "maintenance": {
+        "type": "script",
         "script": "maintenance.sh",
         "args": ["--scheduled"],
         "description": "System maintenance",
         "category": "script",
     },
     "library-catalog": {
+        "type": "script",
         "script": "library-catalog.sh",
         "args": ["--quiet"],
         "description": "Snapshot library content",
         "category": "script",
     },
     "metadata-audit": {
+        "type": "script",
         "script": "metadata-audit.sh",
         "args": ["--quiet"],
         "description": "Validate metadata",
         "category": "script",
     },
     "encode-queue": {
+        "type": "script",
         "script": "encode-queue.sh",
         "args": ["--quiet"],
         "description": "Generate encode queue",
         "category": "script",
     },
     "storage-report": {
+        "type": "script",
         "script": "storage-report.sh",
         "args": ["--quiet"],
         "description": "Storage usage report",
         "category": "script",
     },
     "episode-gaps": {
+        "type": "script",
         "script": "episode-gaps.sh",
         "args": ["--quiet"],
         "description": "Find missing episodes",
         "category": "script",
     },
     "archive-reports": {
+        "type": "script",
         "script": "archive-reports.sh",
         "args": ["--quiet"],
         "description": "Archive reports",
         "category": "script",
     },
     "plex-vs-arrs": {
+        "type": "script",
         "script": "plex-vs-arrs.sh",
         "args": ["--quiet"],
         "description": "Compare Plex vs ARRs",
         "category": "script",
+    },
+
+    # --- Docker: restart containers ---
+    "restart-kometa": {
+        "type": "command",
+        "command": "docker compose restart",
+        "cwd": "kometa",
+        "description": "Restart Kometa",
+        "category": "docker",
+    },
+    "restart-umtk": {
+        "type": "command",
+        "command": "docker compose restart",
+        "cwd": "umtk",
+        "description": "Restart UMTK",
+        "category": "docker",
+    },
+    "restart-imagemaid": {
+        "type": "command",
+        "command": "docker compose restart",
+        "cwd": "imagemaid",
+        "description": "Restart ImageMaid",
+        "category": "docker",
+    },
+    "restart-floppy": {
+        "type": "command",
+        "command": "docker compose restart",
+        "cwd": "floppy",
+        "description": "Restart Floppy",
+        "category": "docker",
+    },
+    "restart-piboard": {
+        "type": "command",
+        "command": "docker compose restart",
+        "cwd": "piboard",
+        "description": "Restart PiBoard",
+        "category": "docker",
+    },
+
+    # --- Docker: update (pull + recreate) ---
+    "update-kometa": {
+        "type": "command",
+        "command": "docker compose pull && docker compose up -d",
+        "cwd": "kometa",
+        "description": "Update Kometa",
+        "category": "docker",
+    },
+    "update-umtk": {
+        "type": "command",
+        "command": "docker compose pull && docker compose up -d",
+        "cwd": "umtk",
+        "description": "Update UMTK",
+        "category": "docker",
+    },
+    "update-imagemaid": {
+        "type": "command",
+        "command": "docker compose pull && docker compose up -d",
+        "cwd": "imagemaid",
+        "description": "Update ImageMaid",
+        "category": "docker",
+    },
+    "update-floppy": {
+        "type": "command",
+        "command": "docker compose pull && docker compose up -d",
+        "cwd": "floppy",
+        "description": "Update Floppy",
+        "category": "docker",
+    },
+    "update-piboard": {
+        "type": "command",
+        "command": "docker compose pull && docker compose up -d",
+        "cwd": "piboard",
+        "description": "Update PiBoard",
+        "category": "docker",
+    },
+
+    # --- Kometa manual run ---
+    "kometa-run": {
+        "type": "command",
+        "command": "docker exec kometa python /kometa.py --run",
+        "cwd": None,
+        "description": "Kometa full run",
+        "category": "docker",
+    },
+    "kometa-run-movies": {
+        "type": "command",
+        "command": 'docker exec kometa python /kometa.py --run --library "Movies"',
+        "cwd": None,
+        "description": "Kometa run (Movies)",
+        "category": "docker",
+    },
+    "kometa-run-tv": {
+        "type": "command",
+        "command": 'docker exec kometa python /kometa.py --run --library "TV Shows"',
+        "cwd": None,
+        "description": "Kometa run (TV Shows)",
+        "category": "docker",
+    },
+
+    # --- System ---
+    "system-update": {
+        "type": "command",
+        "command": "sudo apt update && sudo apt upgrade -y",
+        "cwd": None,
+        "description": "System update (apt)",
+        "category": "system",
+        "confirm": True,
+    },
+    "system-reboot": {
+        "type": "command",
+        "command": "sudo reboot",
+        "cwd": None,
+        "description": "Reboot server",
+        "category": "system",
+        "confirm": True,
     },
 }
 
@@ -106,18 +238,27 @@ running_lock = threading.Lock()
 
 def run_task(job_id, name, task):
     """Execute a task in a subprocess and track its status."""
-    script_path = SCRIPTS_DIR / task["script"]
-    cmd = ["bash", str(script_path)] + task["args"]
+    env = os.environ.copy()
+    env["HOME"] = str(Path.home())
+
+    task_type = task.get("type", "script")
+
+    if task_type == "script":
+        script_path = SCRIPTS_DIR / task["script"]
+        cmd = ["bash", str(script_path)] + task.get("args", [])
+        cwd = str(SCRIPTS_DIR)
+    else:
+        # command type — run via bash -c
+        cmd = ["bash", "-c", task["command"]]
+        cwd_name = task.get("cwd")
+        cwd = str(DOCKER_DIR / cwd_name) if cwd_name else str(Path.home())
 
     try:
-        # Inherit user environment (PATH, HOME, etc.) for scripts that need it
-        env = os.environ.copy()
-        env["HOME"] = str(Path.home())
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            cwd=str(SCRIPTS_DIR),
+            cwd=cwd,
             env=env,
         )
 
@@ -191,6 +332,7 @@ class APIHandler(BaseHTTPRequestHandler):
                     "description": task["description"],
                     "category": task["category"],
                     "running": is_running,
+                    "confirm": task.get("confirm", False),
                 })
             self.send_json(200, {"tasks": task_list})
             return
@@ -230,11 +372,30 @@ class APIHandler(BaseHTTPRequestHandler):
                 return
 
             task = ALLOWED_TASKS[name]
-            script_path = SCRIPTS_DIR / task["script"]
 
-            if not script_path.exists():
-                self.send_json(500, {"error": f"Script not found: {task['script']}"})
-                return
+            # Validate script exists (for script-type tasks)
+            if task.get("type", "script") == "script":
+                script_path = SCRIPTS_DIR / task["script"]
+                if not script_path.exists():
+                    self.send_json(500, {"error": f"Script not found: {task['script']}"})
+                    return
+
+            # Check confirmation requirement
+            if task.get("confirm"):
+                # Read body for confirmation token
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length) if content_length > 0 else b""
+                try:
+                    payload = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    payload = {}
+                if payload.get("confirm") != True:
+                    self.send_json(400, {
+                        "error": "Confirmation required",
+                        "confirm_required": True,
+                        "message": f"Are you sure you want to: {task['description']}?",
+                    })
+                    return
 
             with running_lock:
                 if name in running_tasks:
@@ -262,7 +423,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 "id": job_id,
                 "name": name,
                 "status": "starting",
-                "message": f"Started {task['description']}",
+                "message": f"Started: {task['description']}",
             })
             return
 
