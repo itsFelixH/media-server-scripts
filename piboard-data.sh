@@ -108,7 +108,7 @@ if cache_stale "$SERVICES_CACHE" 300; then
         _add_lr "ImageMaid" "$_t"
     }
     # Script-based last runs (from log directories)
-    for _sname in healthcheck backup archive-reports maintenance library-catalog metadata-audit encode-queue storage-report media-analyzer; do
+    for _sname in healthcheck backup archive-reports maintenance library-catalog metadata-audit encode-queue storage-report media-analyzer episode-gaps plex-vs-arrs; do
         _sl=$(ls -t "$LOG_DIR/$_sname"/${_sname}_*.log 2>/dev/null | head -1)
         [ -n "$_sl" ] && {
             _t=$(stat -c '%Y' "$_sl")
@@ -122,6 +122,9 @@ if cache_stale "$SERVICES_CACHE" 300; then
                 metadata-audit) _add_lr "Metadata Audit" "$_t" ;;
                 encode-queue) _add_lr "Encode Queue" "$_t" ;;
                 storage-report) _add_lr "Storage Report" "$_t" ;;
+                media-analyzer) _add_lr "Media Analyzer" "$_t" ;;
+                episode-gaps) _add_lr "Episode Gaps" "$_t" ;;
+                plex-vs-arrs) _add_lr "Plex vs ARRs" "$_t" ;;
             esac
         }
     done
@@ -446,6 +449,7 @@ if cache_stale "$SCHED_CACHE" 300; then
             *encode-queue.sh*)   _task_name="Encode Queue"; _desc="Generates prioritized re-encode list from both libraries" ;;
             *storage-report.sh*) _task_name="Storage Report"; _desc="Storage usage report with resolution/codec breakdown" ;;
             *archive-reports.sh*) _task_name="Archive Reports"; _desc="Archives changed reports to /mnt/Media/reports/" ;;
+            *episode-gaps.sh*)   _task_name="Episode Gaps"; _desc="Finds TV shows with missing episodes vs TMDB" ;;
             *piboard-data.sh*)   continue ;; # Skip self — runs every minute, not interesting
             *)                   continue ;; # Skip unrecognized entries
         esac
