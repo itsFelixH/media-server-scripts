@@ -224,6 +224,52 @@ ALLOWED_TASKS = {
         "category": "system",
         "confirm": True,
     },
+
+    # --- Plex ---
+    "plex-restart": {
+        "type": "command",
+        "command": "sudo systemctl restart plexmediaserver",
+        "cwd": None,
+        "description": "Restart Plex",
+        "category": "system",
+    },
+    "plex-clean": {
+        "type": "command",
+        "command": (
+            'PLEX_URL="http://localhost:32400" PLEX_TOKEN="hMbJfVzDc5XNYQJdus8x" && '
+            'curl -s -X PUT "$PLEX_URL/library/sections/4/emptyTrash?X-Plex-Token=$PLEX_TOKEN" && '
+            'curl -s -X PUT "$PLEX_URL/library/sections/5/emptyTrash?X-Plex-Token=$PLEX_TOKEN" && '
+            'curl -s -X PUT "$PLEX_URL/library/sections/4/cleanBundles?X-Plex-Token=$PLEX_TOKEN" && '
+            'curl -s -X PUT "$PLEX_URL/library/sections/5/cleanBundles?X-Plex-Token=$PLEX_TOKEN" && '
+            'curl -s -X PUT "$PLEX_URL/library/optimize?X-Plex-Token=$PLEX_TOKEN"'
+        ),
+        "cwd": None,
+        "description": "Clean Plex (trash + bundles + optimize)",
+        "category": "system",
+    },
+    "plex-scan": {
+        "type": "command",
+        "command": (
+            'PLEX_URL="http://localhost:32400" PLEX_TOKEN="hMbJfVzDc5XNYQJdus8x" && '
+            'curl -s -X GET "$PLEX_URL/library/sections/4/refresh?X-Plex-Token=$PLEX_TOKEN" && '
+            'curl -s -X GET "$PLEX_URL/library/sections/5/refresh?X-Plex-Token=$PLEX_TOKEN"'
+        ),
+        "cwd": None,
+        "description": "Scan Plex libraries",
+        "category": "system",
+    },
+
+    # --- Health ---
+    "clear-incidents": {
+        "type": "command",
+        "command": (
+            'find ~/kometa/scripts/logs/healthcheck/ -name "healthcheck_*.log" -mtime +1 -delete && '
+            'rm -f ~/docker/piboard/data/healthcheck-summary.json ~/docker/piboard/data/.healthcheck-agg.cache'
+        ),
+        "cwd": None,
+        "description": "Clear old health incidents",
+        "category": "monitoring",
+    },
 }
 
 # ===== JOB TRACKER =====
