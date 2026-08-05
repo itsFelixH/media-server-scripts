@@ -317,10 +317,61 @@ ALLOWED_TASKS = {
         "description": "Restart Bazarr",
         "category": "system",
     },
+
+    # --- Update all containers ---
+    "update-all": {
+        "type": "command",
+        "command": (
+            'for d in kometa umtk imagemaid floppy piboard; do '
+            'cd ~/docker/$d && docker compose pull && docker compose up -d; '
+            'done'
+        ),
+        "cwd": None,
+        "description": "Update all containers",
+        "category": "docker",
+        "confirm": True,
+    },
 }
 
 # Containers that support log viewing
 LOGGABLE_CONTAINERS = ["kometa", "umtk", "imagemaid", "floppy", "piboard", "floppy-redis"]
+
+# Log file sources (non-docker)
+LOG_FILE_SOURCES = {
+    "plex": "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Logs/Plex Media Server.log",
+    "umtk-file": None,  # resolved dynamically (latest UMTK_*.log)
+    "imagemaid-file": str(Path.home() / "ImageMaid/config/logs/imagemaid.log"),
+    # Script logs (latest file in each dir)
+    "healthcheck": None,
+    "backup": None,
+    "maintenance": None,
+    "library-catalog": None,
+    "metadata-audit": None,
+    "encode-queue": None,
+    "storage-report": None,
+    "episode-gaps": None,
+    "archive-reports": None,
+    "plex-vs-arrs": None,
+    "media-analyzer": None,
+}
+
+def resolve_log_path(name):
+    """Resolve dynamic log file paths (latest file in a directory)."""
+    if name == "plex":
+        return LOG_FILE_SOURCES["plex"]
+    if name == "umtk-file":
+        import glob
+        files = sorted(glob.glob(str(Path.home() / "UMTK/config/logs/UMTK_*.log")), reverse=True)
+        return files[0] if files else None
+    if name == "imagemaid-file":
+        return LOG_FILE_SOURCES["imagemaid-file"]
+    # Script logs — find latest file in the log dir
+    log_dir = Path.home() / "kometa" / "scripts" / "logs" / name
+    if log_dir.is_dir():
+        import glob
+        files = sorted(glob.glob(str(log_dir / f"{name}*.log")), reverse=True)
+        return files[0] if files else None
+    return None
 
 # ===== JOB TRACKER =====
 
@@ -456,19 +507,65 @@ class APIHandler(BaseHTTPRequestHandler):
 
         # Container logs
         if path.startswith("/api/actions/logs/"):
-            container = path.split("/")[-1]
-            if container not in LOGGABLE_CONTAINERS:
-                self.send_json(400, {"error": f"Unknown container: {container}"})
+            parts = self.path.split("?")
+            container = parts[0].rstrip("/").split("/")[-1]
+            # Parse ?lines=N parameter (default 500, 0 = all available)
+            tail_count = 500
+            if len(parts) > 1:
+                for param in parts[1].split("&"):
+                    if param.startswith("lines="):
+                        try:
+                            val = int(param.split("=")[1])
+                            tail_count = val  # 0 means all
+                        except ValueError:
+                            pass
+            if container not in LOGGABLE_CONTAINERS and container not in LOG_FILE_SOURCES:
+                self.send_json(400, {"error": f"Unknown log source: {container}"})
                 return
+
+            # Special case: Kometa — read the run log file (latest run only)
+            if container == "kometa":
+                log_file = Path.home() / "kometa" / "config" / "logs" / "meta.log"
+                try:
+                    if log_file.exists():
+                        all_lines = log_file.read_text().strip().split("\n")
+                        # Return last N lines, or all if lines=0
+                        lines = all_lines[-tail_count:] if tail_count > 0 and tail_count < len(all_lines) else all_lines
+                        self.send_json(200, {"container": container, "lines": lines, "count": len(lines)})
+                    else:
+                        self.send_json(404, {"error": "Kometa log file not found"})
+                except Exception as e:
+                    self.send_json(500, {"error": str(e)})
+                return
+
+            # File-based log sources (Plex, UMTK file, ImageMaid file, scripts)
+            if container in LOG_FILE_SOURCES:
+                log_path = resolve_log_path(container)
+                if not log_path or not Path(log_path).exists():
+                    self.send_json(404, {"error": f"Log file not found for {container}"})
+                    return
+                try:
+                    all_lines = Path(log_path).read_text().strip().split("\n")
+                    lines = all_lines[-tail_count:] if tail_count > 0 and tail_count < len(all_lines) else all_lines
+                    self.send_json(200, {"container": container, "lines": lines, "count": len(lines)})
+                except Exception as e:
+                    self.send_json(500, {"error": str(e)})
+                return
+
+            # Docker container logs
             try:
+                # Cap docker logs at 5000 to avoid huge outputs
+                docker_tail = tail_count if tail_count > 0 else 5000
                 result = subprocess.run(
-                    ["docker", "logs", container, "--tail", "50"],
-                    capture_output=True, text=True, timeout=10
+                    ["docker", "logs", container, "--tail", str(docker_tail)],
+                    capture_output=True, text=True, timeout=30
                 )
-                lines = (result.stdout + result.stderr).strip().split("\n")
+                # Combine stdout+stderr, then take only the last N lines
+                all_lines = (result.stdout + result.stderr).strip().split("\n")
+                lines = all_lines[-docker_tail:] if len(all_lines) > docker_tail else all_lines
                 self.send_json(200, {
                     "container": container,
-                    "lines": lines[-50:],
+                    "lines": lines,
                     "count": len(lines),
                 })
             except subprocess.TimeoutExpired:
