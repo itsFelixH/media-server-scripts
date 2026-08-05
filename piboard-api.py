@@ -263,14 +263,64 @@ ALLOWED_TASKS = {
     "clear-incidents": {
         "type": "command",
         "command": (
-            'find ~/kometa/scripts/logs/healthcheck/ -name "healthcheck_*.log" -mtime +1 -delete && '
-            'rm -f ~/docker/piboard/data/healthcheck-summary.json ~/docker/piboard/data/.healthcheck-agg.cache'
+            'echo $(date +%s) > ~/docker/piboard/data/.incidents-cleared'
         ),
         "cwd": None,
-        "description": "Clear old health incidents",
+        "description": "Dismiss incident list",
         "category": "monitoring",
     },
+
+    # --- Data refresh ---
+    "refresh-data": {
+        "type": "command",
+        "command": (
+            'rm -f ~/docker/piboard/data/.services.cache '
+            '~/docker/piboard/data/.reports.cache '
+            '~/docker/piboard/data/.genre-decade-date '
+            '~/docker/piboard/data/.content-check-date '
+            '~/docker/piboard/data/.media-disk.cache && '
+            'bash ~/kometa/scripts/piboard-data.sh'
+        ),
+        "cwd": None,
+        "description": "Refresh all dashboard data",
+        "category": "system",
+    },
+
+    # --- UMTK manual run ---
+    "umtk-run": {
+        "type": "command",
+        "command": "docker exec umtk python /app/UMTK.py",
+        "cwd": None,
+        "description": "Run UMTK",
+        "category": "docker",
+    },
+
+    # --- ARR services restart ---
+    "restart-radarr": {
+        "type": "command",
+        "command": "sudo systemctl restart radarr",
+        "cwd": None,
+        "description": "Restart Radarr",
+        "category": "system",
+    },
+    "restart-sonarr": {
+        "type": "command",
+        "command": "sudo systemctl restart sonarr",
+        "cwd": None,
+        "description": "Restart Sonarr",
+        "category": "system",
+    },
+    "restart-bazarr": {
+        "type": "command",
+        "command": "sudo systemctl restart bazarr",
+        "cwd": None,
+        "description": "Restart Bazarr",
+        "category": "system",
+    },
 }
+
+# Containers that support log viewing
+LOGGABLE_CONTAINERS = ["kometa", "umtk", "imagemaid", "floppy", "piboard", "floppy-redis"]
 
 # ===== JOB TRACKER =====
 
@@ -402,6 +452,29 @@ class APIHandler(BaseHTTPRequestHandler):
                     (job.get("end_time") or time.time()) - job["start_time"], 1
                 ),
             })
+            return
+
+        # Container logs
+        if path.startswith("/api/actions/logs/"):
+            container = path.split("/")[-1]
+            if container not in LOGGABLE_CONTAINERS:
+                self.send_json(400, {"error": f"Unknown container: {container}"})
+                return
+            try:
+                result = subprocess.run(
+                    ["docker", "logs", container, "--tail", "50"],
+                    capture_output=True, text=True, timeout=10
+                )
+                lines = (result.stdout + result.stderr).strip().split("\n")
+                self.send_json(200, {
+                    "container": container,
+                    "lines": lines[-50:],
+                    "count": len(lines),
+                })
+            except subprocess.TimeoutExpired:
+                self.send_json(500, {"error": "Timeout fetching logs"})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
             return
 
         self.send_json(404, {"error": "Not found"})
