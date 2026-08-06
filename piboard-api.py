@@ -434,12 +434,52 @@ def resolve_command(name, task):
 
 # ===== JOB TRACKER =====
 
-jobs = {}  # job_id → {name, status, start_time, end_time, exit_code, pid}
+JOBS_FILE = Path.home() / "docker" / "piboard" / "data" / ".jobs-history.json"
+JOB_RETENTION_SECONDS = 86400  # 24 hours
+
+jobs = {}  # job_id → {name, status, start_time, end_time, exit_code, pid, output}
 jobs_lock = threading.Lock()
 
 # Prevent running the same task concurrently
 running_tasks = set()
 running_lock = threading.Lock()
+
+
+def load_jobs():
+    """Load persisted jobs from disk on startup."""
+    global jobs
+    try:
+        if JOBS_FILE.exists():
+            data = json.loads(JOBS_FILE.read_text())
+            # Filter out expired jobs and strip PID (not valid across restarts)
+            now = time.time()
+            for jid, job in data.items():
+                if job.get("end_time") and (now - job["end_time"]) > JOB_RETENTION_SECONDS:
+                    continue
+                # Mark any "running" jobs from before restart as failed
+                if job.get("status") in ("running", "starting"):
+                    job["status"] = "failed"
+                    job["exit_code"] = -1
+                    job["end_time"] = job.get("end_time") or job["start_time"]
+                    job.setdefault("output", ["(API restarted — job status unknown)"])
+                job["pid"] = None
+                jobs[jid] = job
+    except Exception:
+        pass
+
+
+def save_jobs():
+    """Persist jobs to disk (called after job completes)."""
+    try:
+        with jobs_lock:
+            # Only save completed jobs (not running ones with active PIDs)
+            saveable = {
+                jid: {k: v for k, v in job.items() if k != "pid"}
+                for jid, job in jobs.items()
+            }
+        JOBS_FILE.write_text(json.dumps(saveable))
+    except Exception:
+        pass
 
 
 def run_task(job_id, name, task):
@@ -490,6 +530,7 @@ def run_task(job_id, name, task):
             jobs[job_id]["exit_code"] = proc.returncode
             jobs[job_id]["end_time"] = time.time()
             jobs[job_id]["output"] = output_lines[-20:]
+        save_jobs()
 
     except Exception as e:
         with jobs_lock:
@@ -497,6 +538,7 @@ def run_task(job_id, name, task):
             jobs[job_id]["error"] = str(e)
             jobs[job_id]["end_time"] = time.time()
             jobs[job_id]["output"] = [str(e)]
+        save_jobs()
 
     finally:
         with running_lock:
@@ -504,12 +546,12 @@ def run_task(job_id, name, task):
 
 
 def cleanup_old_jobs():
-    """Remove jobs older than 1 hour to prevent memory growth."""
+    """Remove jobs older than 24 hours to prevent memory growth."""
     now = time.time()
     with jobs_lock:
         expired = [
             jid for jid, job in jobs.items()
-            if job.get("end_time") and (now - job["end_time"]) > 3600
+            if job.get("end_time") and (now - job["end_time"]) > JOB_RETENTION_SECONDS
         ]
         for jid in expired:
             del jobs[jid]
@@ -596,6 +638,13 @@ class APIHandler(BaseHTTPRequestHandler):
                         ),
                     })
             self.send_json(200, {"jobs": job_list})
+            return
+
+        # Currently running jobs (quick check)
+        if path == "/api/actions/running":
+            with running_lock:
+                running = list(running_tasks)
+            self.send_json(200, {"running": running, "count": len(running)})
             return
 
         # Container logs
@@ -767,6 +816,7 @@ class APIHandler(BaseHTTPRequestHandler):
 # ===== MAIN =====
 
 def main():
+    load_jobs()
     server = HTTPServer((HOST, PORT), APIHandler)
     print(f"PiBoard API listening on {HOST}:{PORT}")
     try:
