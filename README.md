@@ -52,7 +52,7 @@ bash healthcheck.sh
 |--------|---------|----------|
 | `healthcheck.sh` | Monitor services, disk, memory, temperature, APIs | Every 30 min |
 | `piboard-data.sh` | PiBoard data (system stats, services, last runs, network) | Every 1 min |
-| `maintenance.sh` | System updates, Docker updates, log rotation, diagnostics | Mondays 03:00 |
+| `maintenance.sh` | System updates, Docker updates, Docker prune, log rotation, diagnostics | Mondays 03:00 |
 | `backup.sh` | Archive all configs to media drive | Sundays 01:00 |
 | `archive-reports.sh` | Copy changed reports to archive with date stamps | Daily 05:30 |
 | `library-catalog.sh` | Snapshot library contents with diff tracking | Sundays 01:30 |
@@ -63,6 +63,7 @@ bash healthcheck.sh
 | `plex-vs-arrs.sh` | Compare Plex library against Radarr/Sonarr | Sundays 02:30 |
 | `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
 | `runkometa.sh` | Interactive Kometa runner with library/mode selection | Manual |
+| `piboard-api.py` | PiBoard action button API server (port 5052) | Always running (systemd) |
 
 All scripts support `-h`/`--help` and `--no-discord`.
 Scripts with terminal output support `-q`/`--quiet` for cron use.
