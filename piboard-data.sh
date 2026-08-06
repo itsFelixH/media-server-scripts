@@ -264,6 +264,7 @@ _last_updates_check=""
 
 if [ "$TODAY" != "$_last_updates_check" ]; then
     _apt_count=$(apt list --upgradable 2>/dev/null | grep -c "/" 2>/dev/null) || _apt_count=0
+    _plex_update=$(apt list --upgradable 2>/dev/null | grep -q "plexmediaserver" && echo "true" || echo "false")
     _radarr_latest="" _sonarr_latest=""
     _radarr_current="" _sonarr_current=""
     if [ -n "$API_KEY_RADARR" ]; then
@@ -297,12 +298,13 @@ if [ "$TODAY" != "$_last_updates_check" ]; then
     done
     jq -n \
         --argjson apt "$_apt_count" \
+        --argjson plex_update "$_plex_update" \
         --arg radarr_current "$_radarr_current" \
         --arg radarr_latest "$_radarr_latest" \
         --arg sonarr_current "$_sonarr_current" \
         --arg sonarr_latest "$_sonarr_latest" \
         --argjson docker "$_docker_updates" \
-        '{apt_packages:$apt, radarr:{current:$radarr_current,latest:$radarr_latest}, sonarr:{current:$sonarr_current,latest:$sonarr_latest}, docker:$docker}' > "$DATA_DIR/.updates.json"
+        '{apt_packages:$apt, plex_update:$plex_update, radarr:{current:$radarr_current,latest:$radarr_latest}, sonarr:{current:$sonarr_current,latest:$sonarr_latest}, docker:$docker}' > "$DATA_DIR/.updates.json"
     echo "$TODAY" > "$UPDATES_CACHE"
 fi
 
