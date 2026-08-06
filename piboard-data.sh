@@ -144,6 +144,19 @@ if cache_stale "$SERVICES_CACHE" 300; then
         _k_warnings=$(grep -c "\[WARNING\]" "$KOMETA_CONFIG/logs/meta.log" 2>/dev/null) || _k_warnings=0
         _k_collections=$(grep -Ec "Collection .* created|Collection .* updated|Updating Details" "$KOMETA_CONFIG/logs/meta.log" 2>/dev/null) || _k_collections=0
         _kometa_status=$(jq -n --argjson e "$_k_errors" --argjson w "$_k_warnings" --argjson c "$_k_collections" '{errors:$e,warnings:$w,collections:$c}')
+
+        # Track Kometa run history (last 7 durations for sparkline)
+        _k_run_ts=$(stat -c '%Y' "$KOMETA_CONFIG/logs/meta.log")
+        _k_dur=$(grep "Run Time:" "$KOMETA_CONFIG/logs/meta.log" | tail -1 | grep -oP 'Run Time: \K[0-9:]+')
+        _k_hist_file="$DATA_DIR/.kometa-history.json"
+        [ ! -f "$_k_hist_file" ] && echo '[]' > "$_k_hist_file"
+        _k_last_tracked=$(jq -r '.[-1].ts // 0' "$_k_hist_file" 2>/dev/null)
+        if [ "$_k_run_ts" != "$_k_last_tracked" ] && [ -n "$_k_dur" ]; then
+            # Convert HH:MM:SS duration to minutes
+            _k_dur_min=$(echo "$_k_dur" | awk -F: '{print int($1)*60 + int($2) + ($3>0?1:0)}')
+            jq --argjson ts "$_k_run_ts" --argjson dur "$_k_dur_min" \
+                '. + [{ts:$ts,dur:$dur}] | .[-7:]' "$_k_hist_file" > "$_k_hist_file.tmp" && mv "$_k_hist_file.tmp" "$_k_hist_file"
+        fi
     fi
 
     # Write JSON cache files (safe against single quotes in data)
@@ -171,6 +184,7 @@ last_runs_json=$(cat "$DATA_DIR/.last-runs.json" 2>/dev/null || echo '[]')
 plex_json=$(cat "$DATA_DIR/.plex-info.json" 2>/dev/null || echo '{}')
 kometa_status_json=$(cat "$DATA_DIR/.kometa-status.json" 2>/dev/null)
 [ -z "$kometa_status_json" ] || ! echo "$kometa_status_json" | jq . >/dev/null 2>&1 && kometa_status_json='{}'
+kometa_history_json=$(cat "$DATA_DIR/.kometa-history.json" 2>/dev/null || echo '[]')
 
 # ===== SLOW DATA (every hour) =====
 
@@ -455,6 +469,7 @@ if cache_stale "$HC_AGG_CACHE" 300; then
                 t=substr($0,2,16)
                 s=index($0,"] ")>0 ? substr($0,index($0,"] ")+2) : ""
                 if(s~/^OK/) printf "{\"time\":\"%s\",\"status\":\"ok\",\"detail\":null},", t
+                else if(s~/^WARN/) { gsub(/^WARN[^:]*: /,"",s); gsub(/"/,"\\\"",s); printf "{\"time\":\"%s\",\"status\":\"warn\",\"detail\":\"%s\"},", t, s }
                 else if(s~/^FAIL/) { gsub(/^FAIL[^:]*: /,"",s); gsub(/"/,"\\\"",s); printf "{\"time\":\"%s\",\"status\":\"fail\",\"detail\":\"%s\"},", t, s }
             }' "$_hcf" | sed 's/,$//')
             _hc_json=$(echo "$_hc_json" | jq --arg f "$_fname" --argjson e "[${_entries}]" '. + [{filename:$f,entries:$e}]')
@@ -664,6 +679,7 @@ jq -n \
     --argjson disk_growth "$growth_json" \
     --argjson plex "$plex_json" \
     --argjson kometa_status "$kometa_status_json" \
+    --argjson kometa_history "$kometa_history_json" \
     --argjson updates "$updates_json" \
     --argjson audit "$audit_json" \
     --argjson resolution_breakdown "$breakdown_json" \
@@ -703,6 +719,7 @@ jq -n \
         disk_growth: $disk_growth,
         plex: $plex,
         kometa_status: $kometa_status,
+        kometa_history: $kometa_history,
         updates: $updates,
         audit: $audit,
         resolution_breakdown: $resolution_breakdown,
