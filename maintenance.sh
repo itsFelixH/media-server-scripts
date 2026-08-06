@@ -200,6 +200,16 @@ update_containers() {
     fi
 }
 
+# Clean Docker cache (dangling images, build cache, unused networks)
+clean_docker() {
+    echo "---- DOCKER CLEANUP ----"
+    local before=$(docker system df --format '{{.Reclaimable}}' 2>/dev/null | head -1)
+    docker system prune -f --volumes 2>/dev/null
+    docker image prune -f 2>/dev/null
+    local after=$(docker system df --format '{{.Reclaimable}}' 2>/dev/null | head -1)
+    echo "[✓] Docker cleanup complete (was: $before reclaimable)"
+}
+
 # Service management
 manage_services() {
     echo "---- SERVICE MANAGEMENT ----"
@@ -567,6 +577,8 @@ if [[ "$1" == "--scheduled" ]]; then
     update_media_tools
     echo
     update_containers
+    echo
+    clean_docker
     echo
     validate_configs
     echo
