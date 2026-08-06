@@ -8,8 +8,12 @@ tracks running jobs, and returns status. LAN-only, no auth.
 Endpoints:
     GET  /api/actions/tasks       → list of available tasks with current status
     POST /api/actions/run/<name>  → trigger a task, returns job ID
-    GET  /api/actions/job/<id>    → check job status (running/done/failed + exit code)
-    POST /api/actions/stop/<id>   → kill a running job
+    GET  /api/actions/job/<id>    → check job status (running/done/failed + exit code + output)
+    GET  /api/actions/jobs        → list all recent jobs (24h history)
+    GET  /api/actions/running     → list currently running tasks
+    POST /api/actions/stop/<id>   → kill a running job (SIGTERM, escalates to SIGKILL after 10s)
+    GET  /api/actions/logs/<name> → fetch log lines for a container or script
+    GET  /api/actions/health      → API health check (uptime, job counts, memory)
 
 Port: 5052 (proxied through nginx at /api/actions/)
 """
@@ -53,6 +57,8 @@ def get_config_value(key):
 
 PLEX_URL = get_config_value("plex.url") or "http://localhost:32400"
 PLEX_TOKEN = get_config_value("plex.token")
+
+_api_start_time = time.time()
 
 # Allowlist: name → task definition
 # Types:
@@ -432,6 +438,32 @@ def resolve_command(name, task):
         )
     return "echo 'Unknown dynamic command'"
 
+# Map task names to their log sources (for job response)
+TASK_LOG_SOURCES = {
+    "healthcheck": "healthcheck",
+    "backup": "backup",
+    "maintenance": "maintenance",
+    "library-catalog": "library-catalog",
+    "metadata-audit": "metadata-audit",
+    "encode-queue": "encode-queue",
+    "storage-report": "storage-report",
+    "episode-gaps": "episode-gaps",
+    "archive-reports": "archive-reports",
+    "plex-vs-arrs": "plex-vs-arrs",
+    "kometa-run": "kometa",
+    "kometa-run-movies": "kometa",
+    "kometa-run-tv": "kometa",
+    "umtk-run": "umtk",
+    "restart-kometa": "kometa",
+    "restart-umtk": "umtk",
+    "restart-imagemaid": "imagemaid",
+    "restart-floppy": "floppy",
+    "restart-piboard": "piboard",
+    "plex-restart": "plex",
+    "plex-clean": "plex",
+    "plex-scan": "plex",
+}
+
 # ===== JOB TRACKER =====
 
 JOBS_FILE = Path.home() / "docker" / "piboard" / "data" / ".jobs-history.json"
@@ -579,7 +611,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_json(200, {})
 
     def do_GET(self):
-        path = self.path.rstrip("/")
+        path = self.path.split("?")[0].rstrip("/")
 
         # List available tasks
         if path == "/api/actions/tasks":
@@ -617,6 +649,7 @@ class APIHandler(BaseHTTPRequestHandler):
                     (job.get("end_time") or time.time()) - job["start_time"], 1
                 ),
                 "output": job.get("output", []),
+                "log_source": TASK_LOG_SOURCES.get(job["name"]),
             })
             return
 
@@ -645,6 +678,24 @@ class APIHandler(BaseHTTPRequestHandler):
             with running_lock:
                 running = list(running_tasks)
             self.send_json(200, {"running": running, "count": len(running)})
+            return
+
+        # API health check
+        if path == "/api/actions/health":
+            with jobs_lock:
+                total_jobs = len(jobs)
+                running_count = sum(1 for j in jobs.values() if j["status"] == "running")
+                done_count = sum(1 for j in jobs.values() if j["status"] == "done")
+                failed_count = sum(1 for j in jobs.values() if j["status"] == "failed")
+            import resource
+            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+            self.send_json(200, {
+                "status": "ok",
+                "uptime_seconds": round(time.time() - _api_start_time, 1),
+                "tasks_registered": len(ALLOWED_TASKS),
+                "jobs": {"total": total_jobs, "running": running_count, "done": done_count, "failed": failed_count},
+                "memory_mb": round(mem_mb, 1),
+            })
             return
 
         # Container logs
@@ -719,7 +770,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "Not found"})
 
     def do_POST(self):
-        path = self.path.rstrip("/")
+        path = self.path.split("?")[0].rstrip("/")
 
         # Trigger a task
         if path.startswith("/api/actions/run/"):
@@ -803,7 +854,15 @@ class APIHandler(BaseHTTPRequestHandler):
             if pid:
                 try:
                     os.kill(pid, 15)  # SIGTERM
-                    self.send_json(200, {"message": "Stop signal sent", "id": job_id})
+                    # Escalate to SIGKILL after 10 seconds in background
+                    def escalate_kill(p):
+                        time.sleep(10)
+                        try:
+                            os.kill(p, 9)  # SIGKILL
+                        except (ProcessLookupError, OSError):
+                            pass
+                    threading.Thread(target=escalate_kill, args=(pid,), daemon=True).start()
+                    self.send_json(200, {"message": "Stop signal sent (force-kill in 10s if needed)", "id": job_id})
                 except ProcessLookupError:
                     self.send_json(200, {"message": "Process already exited", "id": job_id})
             else:
