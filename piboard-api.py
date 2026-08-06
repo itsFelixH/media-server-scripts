@@ -318,6 +318,32 @@ ALLOWED_TASKS = {
         "category": "system",
     },
 
+    # --- ARR services update (via their own API) ---
+    "update-radarr": {
+        "type": "command",
+        "command": (
+            'RADARR_KEY=$(grep -oP "radarr:\\s*\\K\\S+" ~/kometa/scripts/config.yml) && '
+            'curl -s -X POST "http://localhost:7878/api/v3/command" '
+            '-H "Content-Type: application/json" -H "X-Api-Key: $RADARR_KEY" '
+            '-d \'{"name":"ApplicationUpdate"}\''
+        ),
+        "cwd": None,
+        "description": "Update Radarr",
+        "category": "system",
+    },
+    "update-sonarr": {
+        "type": "command",
+        "command": (
+            'SONARR_KEY=$(grep -oP "sonarr:\\s*\\K\\S+" ~/kometa/scripts/config.yml) && '
+            'curl -s -X POST "http://localhost:8989/api/v3/command" '
+            '-H "Content-Type: application/json" -H "X-Api-Key: $SONARR_KEY" '
+            '-d \'{"name":"ApplicationUpdate"}\''
+        ),
+        "cwd": None,
+        "description": "Update Sonarr",
+        "category": "system",
+    },
+
     # --- Update all containers ---
     "update-all": {
         "type": "command",
