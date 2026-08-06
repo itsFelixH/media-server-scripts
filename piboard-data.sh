@@ -255,6 +255,59 @@ codec_json=$(cat "$DATA_DIR/.breakdown-cod-tv.json" 2>/dev/null || echo '[]')
 breakdown_movies_json=$(cat "$DATA_DIR/.breakdown-res-movies.json" 2>/dev/null || echo '[]')
 codec_movies_json=$(cat "$DATA_DIR/.breakdown-cod-movies.json" 2>/dev/null || echo '[]')
 
+# ===== UPDATES CHECK (daily — APT, Radarr, Sonarr, Docker image ages) =====
+
+UPDATES_CACHE="$DATA_DIR/.updates-check-date"
+
+_last_updates_check=""
+[ -f "$UPDATES_CACHE" ] && _last_updates_check=$(cat "$UPDATES_CACHE")
+
+if [ "$TODAY" != "$_last_updates_check" ]; then
+    _apt_count=$(apt list --upgradable 2>/dev/null | grep -c "/" 2>/dev/null) || _apt_count=0
+    _radarr_latest="" _sonarr_latest=""
+    _radarr_current="" _sonarr_current=""
+    if [ -n "$API_KEY_RADARR" ]; then
+        _radarr_data=$(curl -s --max-time 5 "http://localhost:7878/api/v3/update?apiKey=$API_KEY_RADARR" 2>/dev/null)
+        _radarr_current=$(echo "$_radarr_data" | jq -r '[.[] | select(.installed)] | .[0].version // ""' 2>/dev/null)
+        _radarr_latest=$(echo "$_radarr_data" | jq -r '[.[] | select(.installed | not)] | .[0].version // ""' 2>/dev/null)
+    fi
+    if [ -n "$API_KEY_SONARR" ]; then
+        _sonarr_data=$(curl -s --max-time 5 "http://localhost:8989/api/v3/update?apiKey=$API_KEY_SONARR" 2>/dev/null)
+        _sonarr_current=$(echo "$_sonarr_data" | jq -r '[.[] | select(.installed)] | .[0].version // ""' 2>/dev/null)
+        _sonarr_latest=$(echo "$_sonarr_data" | jq -r '[.[] | select(.installed | not)] | .[0].version // ""' 2>/dev/null)
+    fi
+    _docker_updates='[]'
+    for _ctr in "${DOCKER_CONTAINERS[@]}"; do
+        _img=$(docker inspect --format='{{.Config.Image}}' "$_ctr" 2>/dev/null)
+        _created=$(docker inspect --format='{{.Created}}' "$_ctr" 2>/dev/null | cut -dT -f1)
+        _days=0
+        if [ -n "$_created" ]; then
+            _created_ts=$(date -d "$_created" +%s 2>/dev/null) || _created_ts=0
+            [ "$_created_ts" -gt 0 ] && _days=$(( ($(date +%s) - _created_ts) / 86400 ))
+        fi
+        # Check for update by comparing image ID before/after pull
+        _has_update="false"
+        if [ -n "$_img" ]; then
+            _local_id=$(docker images --format='{{.ID}}' "$_img" 2>/dev/null | head -1)
+            _pull_output=$(docker pull "$_img" 2>&1)
+            _new_id=$(docker images --format='{{.ID}}' "$_img" 2>/dev/null | head -1)
+            [ -n "$_local_id" ] && [ -n "$_new_id" ] && [ "$_local_id" != "$_new_id" ] && _has_update="true"
+        fi
+        _docker_updates=$(echo "$_docker_updates" | jq --arg n "$_ctr" --argjson d "$_days" --argjson u "$_has_update" --arg img "${_img:-}" '. + [{name:$n,age_days:$d,update_available:$u,image:$img}]')
+    done
+    jq -n \
+        --argjson apt "$_apt_count" \
+        --arg radarr_current "$_radarr_current" \
+        --arg radarr_latest "$_radarr_latest" \
+        --arg sonarr_current "$_sonarr_current" \
+        --arg sonarr_latest "$_sonarr_latest" \
+        --argjson docker "$_docker_updates" \
+        '{apt_packages:$apt, radarr:{current:$radarr_current,latest:$radarr_latest}, sonarr:{current:$sonarr_current,latest:$sonarr_latest}, docker:$docker}' > "$DATA_DIR/.updates.json"
+    echo "$TODAY" > "$UPDATES_CACHE"
+fi
+
+updates_json=$(cat "$DATA_DIR/.updates.json" 2>/dev/null || echo '{}')
+
 # ===== GENRE/DECADE DATA (daily — Plex API for full library metadata) =====
 
 GENRE_CACHE="$DATA_DIR/.genre-decade-date"
@@ -609,6 +662,7 @@ jq -n \
     --argjson disk_growth "$growth_json" \
     --argjson plex "$plex_json" \
     --argjson kometa_status "$kometa_status_json" \
+    --argjson updates "$updates_json" \
     --argjson audit "$audit_json" \
     --argjson resolution_breakdown "$breakdown_json" \
     --argjson codec_breakdown "${codec_json:-[]}" \
@@ -647,6 +701,7 @@ jq -n \
         disk_growth: $disk_growth,
         plex: $plex,
         kometa_status: $kometa_status,
+        updates: $updates,
         audit: $audit,
         resolution_breakdown: $resolution_breakdown,
         codec_breakdown: $codec_breakdown,
