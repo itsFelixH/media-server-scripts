@@ -14,6 +14,7 @@ Endpoints:
 Port: 5052 (proxied through nginx at /api/actions/)
 """
 
+import glob
 import json
 import os
 import subprocess
@@ -29,6 +30,29 @@ HOST = "0.0.0.0"
 PORT = 5052
 SCRIPTS_DIR = Path.home() / "kometa" / "scripts"
 DOCKER_DIR = Path.home() / "docker"
+CONFIG_FILE = SCRIPTS_DIR / "config.yml"
+
+# Read Plex token from shared config (same source as all scripts)
+def get_config_value(key):
+    """Read a value from config.yml (section.key format)."""
+    section, field = key.split(".")
+    try:
+        with open(CONFIG_FILE) as f:
+            in_section = False
+            for line in f:
+                if line.strip() == f"{section}:":
+                    in_section = True
+                    continue
+                if in_section and not line.startswith(" "):
+                    in_section = False
+                if in_section and f"{field}:" in line:
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return ""
+
+PLEX_URL = get_config_value("plex.url") or "http://localhost:32400"
+PLEX_TOKEN = get_config_value("plex.token")
 
 # Allowlist: name → task definition
 # Types:
@@ -235,25 +259,14 @@ ALLOWED_TASKS = {
     },
     "plex-clean": {
         "type": "command",
-        "command": (
-            'PLEX_URL="http://localhost:32400" PLEX_TOKEN="hMbJfVzDc5XNYQJdus8x" && '
-            'curl -s -X PUT "$PLEX_URL/library/sections/4/emptyTrash?X-Plex-Token=$PLEX_TOKEN" && '
-            'curl -s -X PUT "$PLEX_URL/library/sections/5/emptyTrash?X-Plex-Token=$PLEX_TOKEN" && '
-            'curl -s -X PUT "$PLEX_URL/library/sections/4/cleanBundles?X-Plex-Token=$PLEX_TOKEN" && '
-            'curl -s -X PUT "$PLEX_URL/library/sections/5/cleanBundles?X-Plex-Token=$PLEX_TOKEN" && '
-            'curl -s -X PUT "$PLEX_URL/library/optimize?X-Plex-Token=$PLEX_TOKEN"'
-        ),
+        "command": None,  # built dynamically with token
         "cwd": None,
         "description": "Clean Plex (trash + bundles + optimize)",
         "category": "system",
     },
     "plex-scan": {
         "type": "command",
-        "command": (
-            'PLEX_URL="http://localhost:32400" PLEX_TOKEN="hMbJfVzDc5XNYQJdus8x" && '
-            'curl -s -X GET "$PLEX_URL/library/sections/4/refresh?X-Plex-Token=$PLEX_TOKEN" && '
-            'curl -s -X GET "$PLEX_URL/library/sections/5/refresh?X-Plex-Token=$PLEX_TOKEN"'
-        ),
+        "command": None,  # built dynamically with token
         "cwd": None,
         "description": "Scan Plex libraries",
         "category": "system",
@@ -386,7 +399,6 @@ def resolve_log_path(name):
     if name == "plex":
         return LOG_FILE_SOURCES["plex"]
     if name == "umtk-file":
-        import glob
         files = sorted(glob.glob(str(Path.home() / "UMTK/config/logs/UMTK_*.log")), reverse=True)
         return files[0] if files else None
     if name == "imagemaid-file":
@@ -394,10 +406,31 @@ def resolve_log_path(name):
     # Script logs — find latest file in the log dir
     log_dir = Path.home() / "kometa" / "scripts" / "logs" / name
     if log_dir.is_dir():
-        import glob
         files = sorted(glob.glob(str(log_dir / f"{name}*.log")), reverse=True)
         return files[0] if files else None
     return None
+
+
+def resolve_command(name, task):
+    """Resolve dynamic commands (e.g. Plex commands that need the token)."""
+    cmd = task.get("command")
+    if cmd is not None:
+        return cmd
+    # Build Plex commands with token from config
+    if name == "plex-clean":
+        return (
+            f'curl -s -X PUT "{PLEX_URL}/library/sections/4/emptyTrash?X-Plex-Token={PLEX_TOKEN}" && '
+            f'curl -s -X PUT "{PLEX_URL}/library/sections/5/emptyTrash?X-Plex-Token={PLEX_TOKEN}" && '
+            f'curl -s -X PUT "{PLEX_URL}/library/sections/4/cleanBundles?X-Plex-Token={PLEX_TOKEN}" && '
+            f'curl -s -X PUT "{PLEX_URL}/library/sections/5/cleanBundles?X-Plex-Token={PLEX_TOKEN}" && '
+            f'curl -s -X PUT "{PLEX_URL}/library/optimize?X-Plex-Token={PLEX_TOKEN}"'
+        )
+    if name == "plex-scan":
+        return (
+            f'curl -s -X GET "{PLEX_URL}/library/sections/4/refresh?X-Plex-Token={PLEX_TOKEN}" && '
+            f'curl -s -X GET "{PLEX_URL}/library/sections/5/refresh?X-Plex-Token={PLEX_TOKEN}"'
+        )
+    return "echo 'Unknown dynamic command'"
 
 # ===== JOB TRACKER =====
 
@@ -422,15 +455,16 @@ def run_task(job_id, name, task):
         cwd = str(SCRIPTS_DIR)
     else:
         # command type — run via bash -c
-        cmd = ["bash", "-c", task["command"]]
+        command_str = resolve_command(name, task)
+        cmd = ["bash", "-c", command_str]
         cwd_name = task.get("cwd")
         cwd = str(DOCKER_DIR / cwd_name) if cwd_name else str(Path.home())
 
     try:
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             cwd=cwd,
             env=env,
         )
@@ -439,18 +473,30 @@ def run_task(job_id, name, task):
             jobs[job_id]["pid"] = proc.pid
             jobs[job_id]["status"] = "running"
 
+        # Read output (keep last 30 lines for debugging)
+        output_lines = []
+        for line in proc.stdout:
+            try:
+                output_lines.append(line.decode("utf-8", errors="replace").rstrip())
+            except Exception:
+                pass
+            if len(output_lines) > 30:
+                output_lines.pop(0)
+
         proc.wait()
 
         with jobs_lock:
             jobs[job_id]["status"] = "done" if proc.returncode == 0 else "failed"
             jobs[job_id]["exit_code"] = proc.returncode
             jobs[job_id]["end_time"] = time.time()
+            jobs[job_id]["output"] = output_lines[-20:]
 
     except Exception as e:
         with jobs_lock:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
             jobs[job_id]["end_time"] = time.time()
+            jobs[job_id]["output"] = [str(e)]
 
     finally:
         with running_lock:
@@ -528,7 +574,28 @@ class APIHandler(BaseHTTPRequestHandler):
                 "duration": round(
                     (job.get("end_time") or time.time()) - job["start_time"], 1
                 ),
+                "output": job.get("output", []),
             })
+            return
+
+        # Job history (all recent jobs)
+        if path == "/api/actions/jobs":
+            cleanup_old_jobs()
+            with jobs_lock:
+                job_list = []
+                for jid, job in sorted(jobs.items(), key=lambda x: x[1]["start_time"], reverse=True):
+                    job_list.append({
+                        "id": jid,
+                        "name": job["name"],
+                        "status": job["status"],
+                        "start_time": job["start_time"],
+                        "end_time": job.get("end_time"),
+                        "exit_code": job.get("exit_code"),
+                        "duration": round(
+                            (job.get("end_time") or time.time()) - job["start_time"], 1
+                        ),
+                    })
+            self.send_json(200, {"jobs": job_list})
             return
 
         # Container logs
