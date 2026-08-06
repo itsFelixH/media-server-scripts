@@ -564,6 +564,14 @@ def run_task(job_id, name, task):
             jobs[job_id]["output"] = output_lines[-20:]
         save_jobs()
 
+        # Invalidate updates cache after successful update tasks
+        if proc.returncode == 0 and name.startswith(("update-", "system-update")):
+            updates_cache = Path.home() / "docker" / "piboard" / "data" / ".updates-check-date"
+            try:
+                updates_cache.unlink(missing_ok=True)
+            except Exception:
+                pass
+
     except Exception as e:
         with jobs_lock:
             jobs[job_id]["status"] = "failed"
