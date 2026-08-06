@@ -43,6 +43,7 @@ mkdir -p "$LOG_DIR/healthcheck"
 exec 2>> "$LOG_FILE"
 
 ISSUES=()
+WARNINGS=()
 PLEX_DOWN=false
 
 SCRIPT_NAME="healthcheck.sh"
@@ -86,7 +87,7 @@ fi
 for container in "${DOCKER_CONTAINERS[@]}"; do
     health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null)
     if [[ "$health" == "unhealthy" ]]; then
-        ISSUES+=("Container $container is unhealthy")
+        WARNINGS+=("Container $container is unhealthy")
     fi
 done
 
@@ -94,7 +95,7 @@ done
 for container in "${DOCKER_CONTAINERS[@]}"; do
     restarts=$(docker inspect --format='{{.RestartCount}}' "$container" 2>/dev/null)
     if [ -n "$restarts" ] && [ "$restarts" -gt "$THRESH_CONTAINER_RESTART_WARN" ]; then
-        ISSUES+=("Container $container has restarted $restarts times")
+        WARNINGS+=("Container $container has restarted $restarts times")
     fi
 done
 
@@ -126,7 +127,7 @@ swap_total=$(free | awk '/Swap:/ {print $2}')
 if [ "$swap_total" -gt 0 ]; then
     swap_pct=$(free | awk '/Swap:/ {printf "%.0f", ($3/$2)*100}')
     if [ "$swap_pct" -gt 80 ]; then
-        ISSUES+=("Swap at ${swap_pct}% (OOM risk)")
+        WARNINGS+=("Swap at ${swap_pct}% (OOM risk)")
     fi
 fi
 
@@ -188,23 +189,23 @@ fi
 if ! ping -c1 -W5 8.8.8.8 >/dev/null 2>&1; then
     ISSUES+=("No internet connectivity")
 elif ! curl -s --max-time 5 -o /dev/null "https://api.themoviedb.org"; then
-    ISSUES+=("TMDb API unreachable (internet may be degraded)")
+    WARNINGS+=("TMDb API unreachable (internet may be degraded)")
 fi
 
 # Check UMTK last run (should have run within threshold)
 latest_umtk=$(find "$UMTK_LOGS_DIR" -name "UMTK_*.log" -mmin -$THRESH_TASK_STALE_MIN 2>/dev/null | head -1)
 if [ -z "$latest_umtk" ]; then
-    ISSUES+=("UMTK has not run in over 26 hours")
+    WARNINGS+=("UMTK has not run in over 26 hours")
 fi
 
 # Check Kometa last run (should have run within threshold)
 if [ -f "$KOMETA_CONFIG/logs/meta.log" ]; then
     kometa_age=$(find "$KOMETA_CONFIG/logs/meta.log" -mmin -$THRESH_TASK_STALE_MIN 2>/dev/null | head -1)
     if [ -z "$kometa_age" ]; then
-        ISSUES+=("Kometa has not run in over 26 hours")
+        WARNINGS+=("Kometa has not run in over 26 hours")
     fi
 else
-    ISSUES+=("Kometa log file not found")
+    WARNINGS+=("Kometa log file not found")
 fi
 
 # Check Floppy container is running
@@ -242,8 +243,11 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
         for issue in "${ISSUES[@]}"; do
             desc+="• $issue"$'\n'
         done
+        for warn in "${WARNINGS[@]}"; do
+            desc+="• ⚠ $warn"$'\n'
+        done
         # Build a short summary for the title (e.g. "sonarr, disk, temp")
-        title_summary=$(printf '%s\n' "${ISSUES[@]}" | sed 's/Service \([^ ]*\).*/\1/; s/Container \([^ ]*\).*/\1/; s/.*disk.*/disk/i; s/.*memory.*/memory/i; s/.*temperature.*/temp/i; s/.*has not run.*/stale task/i' | sort -u | paste -sd', ')
+        title_summary=$(printf '%s\n' "${ISSUES[@]}" "${WARNINGS[@]}" | sed 's/Service \([^ ]*\).*/\1/; s/Container \([^ ]*\).*/\1/; s/.*disk.*/disk/i; s/.*memory.*/memory/i; s/.*temperature.*/temp/i; s/.*has not run.*/stale task/i' | sort -u | paste -sd', ')
         discord_notify "error" "❌ Health Check — $title_summary" "$desc"
     fi
     # Save current issues
@@ -251,6 +255,21 @@ if [ ${#ISSUES[@]} -gt 0 ]; then
     # Log failure
     echo "[$(date +%Y-%m-%d\ %H:%M)] FAIL (${#ISSUES[@]} issues): $(IFS=', '; echo "${ISSUES[*]}")" >> "$LOG_FILE"
     exit 1
+fi
+
+# Check for warnings only (no critical issues)
+if [ ${#WARNINGS[@]} -gt 0 ]; then
+    CURRENT_FINGERPRINT=$(printf '%s\n' "${WARNINGS[@]}" | sort)
+    if [ "$CURRENT_FINGERPRINT" != "$PREV_FINGERPRINT" ]; then
+        desc=""
+        for warn in "${WARNINGS[@]}"; do
+            desc+="• $warn"$'\n'
+        done
+        discord_notify "warning" "⚠️ Health Check — warnings" "$desc"
+    fi
+    printf '%s' "$CURRENT_FINGERPRINT" > "$LAST_ALERT_FILE"
+    echo "[$(date +%Y-%m-%d\ %H:%M)] WARN (${#WARNINGS[@]} warnings): $(IFS=', '; echo "${WARNINGS[*]}")" >> "$LOG_FILE"
+    exit 0
 fi
 
 # All clear — check if we're recovering from a previous failure
