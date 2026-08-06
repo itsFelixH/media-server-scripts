@@ -210,7 +210,7 @@ ALLOWED_TASKS = {
     # --- System ---
     "system-update": {
         "type": "command",
-        "command": "sudo apt update && sudo apt upgrade -y",
+        "command": "sudo apt-get update -y && sudo apt-get upgrade -y && sudo apt-get autoremove -y && sudo apt-get autoclean -y",
         "cwd": None,
         "description": "System update (apt)",
         "category": "system",
