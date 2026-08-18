@@ -317,24 +317,24 @@ ALLOWED_TASKS = {
     # --- ARR services restart ---
     "restart-radarr": {
         "type": "command",
-        "command": "sudo systemctl restart radarr",
+        "command": "docker restart radarr",
         "cwd": None,
         "description": "Restart Radarr",
-        "category": "system",
+        "category": "docker",
     },
     "restart-sonarr": {
         "type": "command",
-        "command": "sudo systemctl restart sonarr",
+        "command": "docker restart sonarr",
         "cwd": None,
         "description": "Restart Sonarr",
-        "category": "system",
+        "category": "docker",
     },
     "restart-bazarr": {
         "type": "command",
-        "command": "sudo systemctl restart bazarr",
+        "command": "docker restart bazarr",
         "cwd": None,
         "description": "Restart Bazarr",
-        "category": "system",
+        "category": "docker",
     },
 
     # --- ARR services update (via their own API) ---
