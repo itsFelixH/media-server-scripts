@@ -379,7 +379,7 @@ ALLOWED_TASKS = {
 }
 
 # Containers that support log viewing
-LOGGABLE_CONTAINERS = ["kometa", "umtk", "imagemaid", "floppy", "piboard", "floppy-redis"]
+LOGGABLE_CONTAINERS = ["kometa", "umtk", "imagemaid", "floppy", "piboard", "floppy-redis", "radarr", "sonarr", "bazarr"]
 
 # Log file sources (non-docker)
 LOG_FILE_SOURCES = {
