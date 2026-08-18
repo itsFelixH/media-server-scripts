@@ -41,8 +41,8 @@ bash healthcheck.sh
 - **Core tools**: `jq`, `curl`
 - **Media analysis**: `ffprobe` (from ffmpeg)
 - **Metadata audit**: `python3`, `python3-yaml`
-- **Docker**: For container management (Kometa, UMTK, ImageMaid, etc.)
-- **systemd**: For service monitoring (Plex, Radarr, Sonarr)
+- **Docker**: For container management (Kometa, UMTK, ImageMaid, Radarr, Sonarr, Bazarr, etc.)
+- **systemd**: For service monitoring (Plex)
 
 ---
 
@@ -102,8 +102,8 @@ Runs silently. Only alerts Discord when something is wrong. Auto-restarts failed
 
 #### What it checks
 
-- systemd services (Plex, Radarr, Sonarr, Bazarr)
-- Docker containers running + healthy (Kometa, UMTK, ImageMaid)
+- systemd services (Plex)
+- Docker containers running + healthy (Kometa, UMTK, ImageMaid, Radarr, Sonarr, Bazarr)
 - Root disk and media drive usage
 - RAM and swap usage
 - CPU temperature
