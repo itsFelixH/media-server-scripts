@@ -12,8 +12,9 @@ Maintenance and monitoring scripts for a [Plex](https://www.plex.tv/) media serv
 | [Floppy](https://github.com/dannyvfilms/Floppy) | Self-hosted media tracker | Always running (Docker) | [GitHub](https://github.com/dannyvfilms/Floppy) |
 | [Simkl](https://simkl.com/) | External media tracker (cloud) | Always running (Plex webhook) | [Docs](https://simkl.com/apps/plex/) |
 | [ImageMaid](https://github.com/Kometa-Team/ImageMaid) | Plex metadata image cleanup and DB optimization | Weekly Sundays at 07:00 (Docker internal) | [GitHub](https://github.com/Kometa-Team/ImageMaid) |
-| [Radarr](https://radarr.video/) | Movie management and downloads | Always running (systemd) | |
-| [Sonarr](https://sonarr.tv/) | TV show management and downloads | Always running (systemd) | |
+| [Radarr](https://radarr.video/) | Movie management and downloads | Always running (Docker) | |
+| [Sonarr](https://sonarr.tv/) | TV show management and downloads | Always running (Docker) | |
+| [Bazarr](https://bazarr.media/) | Subtitle downloads | Always running (Docker) | |
 
 The scripts monitor, maintain, and report on this stack. They don't replace any of these tools — they wrap around them to keep everything healthy and give you visibility into your library.
 
@@ -60,7 +61,7 @@ bash healthcheck.sh
 | `encode-queue.sh` | Find re-encoding candidates | 1st of month |
 | `episode-gaps.sh` | Find TV shows with missing episodes vs TMDB | Sundays 03:00 |
 | `storage-report.sh` | Disk usage breakdown by folder/codec/resolution (both libraries) | 28th of month |
-| `plex-vs-arrs.sh` | Compare Plex library against Radarr/Sonarr | Sundays 02:30 |
+| `plex-vs-arrs.sh` | Compare Plex library against Radarr/Sonarr | Manual / Optional |
 | `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
 | `runkometa.sh` | Interactive Kometa runner with library/mode selection | Manual |
 | `piboard-api.py` | PiBoard action button API server (port 5052) | Always running (systemd) |
@@ -70,189 +71,118 @@ Scripts with terminal output support `-q`/`--quiet` for cron use.
 
 ---
 
-## Configuration
-
-All scripts load settings from `config.yml` via the shared `config.sh` loader. The config file is gitignored (contains secrets).
-
-Copy `config.yml.template` to `config.yml` and fill in your values. The template is fully commented with what each key does.
-
-### Config structure
-
-The config is organized into four sections:
-
-1. **Credentials** — `plex` (url, token), `discord` (alerts, notifications webhooks), `api_keys` (radarr, sonarr)
-2. **Paths** — `media` (movies, tv), `tools` (kometa, umtk, imagemaid, compose_files list), `output` (logs, reports), `backup` (configs, reports)
-3. **Services** — `server` (hostname), `services` (plex service name, arr list, docker_containers list)
-4. **Tuning** — `retention_days` (single value applied to all logs/backups), `notifications` (on_success, on_failure)
-
-Thresholds (disk %, memory %, temperature, stale task minutes) are hardcoded in `config.sh` with sensible defaults — no config needed.
-
-> **Using a single script?** You only need to fill in the keys that script uses (plus `server.hostname`). Leave everything else empty or remove it — `config.sh` won't fail on missing optional keys, it just skips those checks.
-
----
+## Script Details
 
 <details>
-<summary><strong>healthcheck.sh</strong> — services, containers, disk, memory, Plex API</summary>
+<summary><strong>healthcheck.sh</strong> — system & stack monitoring</summary>
 
-Runs silently. Only alerts Discord when something is wrong. Auto-restarts failed Docker containers.
+Monitors system resources and service health. Runs silently, logs output, and sends Discord alerts on failures.
 
-#### Config keys used
+#### Checks performed
 
-`plex.*`, `api_keys.*`, `services.*`, `tools.kometa`, `tools.umtk`
+- **Services**: Plex (`plexmediaserver`), Kometa, UMTK, ImageMaid, Floppy, PiBoard, Radarr, Sonarr, Bazarr
+- **APIs**: Plex, Radarr, Sonarr, Bazarr, UMTK
+- **Disk**: Mount check (`/mnt/Media`), disk usage percentage
+- **Hardware**: CPU temperature (Raspberry Pi `vcgencmd` or `/sys/class/thermal/`), RAM usage
+- **Network**: Internet connectivity ping
+- **Maintenance**: Days since last `maintenance.sh` run
 
-#### What it checks
+#### Output
 
-- systemd services (Plex)
-- Docker containers running + healthy (Kometa, UMTK, ImageMaid, Radarr, Sonarr, Bazarr)
-- Root disk and media drive usage
-- RAM and swap usage
-- CPU temperature
-- Plex API responding + token valid
-- Radarr/Sonarr API responding (skipped if keys empty)
-- Internet + TMDb reachability
-- UMTK, Kometa, Floppy container status
-
-#### Behavior
-
-- All healthy → silent exit, one-line heartbeat in log
-- Issues found → consolidated Discord alert to `#server-alerts`
-- Same issues as last run → no repeat alert (deduplication)
-- Issues resolved → recovery notification with strikethrough list
+- Log: `logs/healthcheck/healthcheck_YYYYMMDD.log`
+- Alert: Discord `notifications.error` webhook on service failure or high disk/temp
 
 </details>
 
 <details>
-<summary><strong>maintenance.sh</strong> — system updates, Docker, log rotation, diagnostics</summary>
+<summary><strong>piboard-data.sh</strong> — collect PiBoard status metrics</summary>
 
-Interactive menu with 11 maintenance tasks. Also runs unattended via `--scheduled`.
+Collects system statistics, docker container status, service health, network metrics, and script last-run info every minute for the PiBoard dashboard.
 
-#### Config keys used
+#### Output
 
-`services.*`, `tools.*`, `retention_days`
-
-#### Menu options
-
-```
- 1: System Maintenance       (apt update/upgrade/autoremove)
- 2: Update Media Tools       (no pip tools — all Docker-based now)
- 3: Update Docker Containers (pull latest images, restart)
- 4: Restart Services         (Plex, arr services, Docker containers)
- 5: Disk Maintenance         (clean old logs, show usage)
- 6: Health Check             (services, disk, memory, load, connectivity)
- 7: Temperature Check        (thermal zones)
- 8: Network Check            (TMDb, Simkl, DNS)
- 9: Process Monitor          (zombies, top CPU)
-10: Config Validation        (YAML syntax for all configs)
-11: Token Consistency Check  (compare Plex token across configs)
-```
-
-#### Scheduled mode
-
-```bash
-bash maintenance.sh --scheduled
-```
-
-Runs tasks 1, 2, 3, 5, 10, 11 unattended. Sends summary to Discord.
+- Output JSON: `~/docker/piboard/data/system-status.json`
 
 </details>
 
 <details>
-<summary><strong>backup.sh</strong> — config archival with retention</summary>
+<summary><strong>piboard-api.py</strong> — PiBoard action button API server</summary>
 
-Creates a zip archive of all critical configs and scripts. Output filename: `<hostname>-backup-YYYYMMDD.zip`. Manages retention automatically.
-
-#### Config keys used
-
-`backup.configs`, `tools.*`, `retention_days`, `server.hostname`
-
-#### What gets backed up
-
-- All `*.yml` from the Kometa config directory
-- Kometa metadata directory (if it contains yml files)
-- All `*.yml` from the UMTK config directory
-- ImageMaid config (`.env`)
-- Docker compose files (from `tools.compose_files` list)
-- Scripts config (`config.yml`)
-- Crontab
+Python API backend running on port 5052 as a systemd user service (`piboard-api.service`). Listens for trigger requests from the PiBoard frontend dashboard to run scripts (e.g. trigger Kometa run, trigger healthcheck, trigger backup).
 
 </details>
 
 <details>
-<summary><strong>archive-reports.sh</strong> — daily report archiver</summary>
+<summary><strong>maintenance.sh</strong> — system update & cleanup</summary>
 
-Copies new or changed reports (JSON and markdown) to the archive location with date-stamped filenames. Only archives when content has actually changed.
+Weekly system maintenance script. Runs package updates, cleans Docker, rotates logs, validates configs, and generates a diagnostic report.
 
-#### Config keys used
+#### What it does
 
-`output.reports`, `backup.reports`
+1. Package updates (`apt-get update && apt-get upgrade`)
+2. Docker cleanup (`docker image prune`, `docker container prune`)
+3. Config validation (YAML syntax check on Kometa, UMTK configs)
+4. Log rotation (compresses old logs, removes logs older than 30 days)
+5. Disk space check
+6. Sends summary notification to Discord
 
-#### Behavior
+#### Options
 
-- Reads reports from `output.reports` directory
-- Archives to `backup.reports` in per-report subdirectories
-- Filenames: `<report-name>-YYYY-MM-DD.json`
-- Extracts report date from JSON `generated` field via jq
-- Skips unchanged reports (diff comparison against latest archived copy)
-- Checks that the archive mount is available before writing
+- `--scheduled` — Run mode for cron (sends Discord notification on success/failure)
+- `--interactive` — Interactive mode with confirmation prompts
 
 </details>
 
 <details>
-<summary><strong>library-catalog.sh</strong> — library snapshot with diff tracking</summary>
+<summary><strong>backup.sh</strong> — configuration backup</summary>
 
-Generates a structured JSON catalog of all movies and TV shows. Compares against the previous run to highlight additions and removals.
+Creates a zip archive of all critical configuration files and saves it to the media drive. Keeps the last 5 backups.
+
+#### Folders backed up
+
+- `~/kometa/config/`
+- `~/UMTK/config/`
+- `~/ImageMaid/config/`
+- `~/docker/`
+- `~/.config/systemd/user/`
+
+#### Output
+
+- Archive: `/mnt/Media/backups/bundepi-backup-YYYYMMDD_HHMMSS.zip`
+
+</details>
+
+<details>
+<summary><strong>archive-reports.sh</strong> — report archiving</summary>
+
+Daily report archiving script. Checks for modified JSON/MD reports in `reports/` and archives date-stamped copies to `/mnt/Media/reports/`.
+
+</details>
+
+<details>
+<summary><strong>library-catalog.sh</strong> — Plex library snapshot & diff</summary>
+
+Generates a complete catalog of movies and TV shows in Plex. Diffs against the previous run to detect added or removed content.
 
 #### Config keys used
 
-`media.*`, `plex.*`
+`plex.url`, `plex.token`
 
 #### Output
 
 - Report: `reports/library-catalog.json` (overwritten each run)
-- Previous: `reports/library-catalog.prev.json` (for diffing)
-- Discord: library totals + changes since last run
-
-#### Features
-
-- Structured movie/show objects with year and size
-- Decade distribution
-- Season detail per show
-- Added date tracking
-- Recently added section
+- Baseline: `reports/library-catalog.baseline.json`
 
 </details>
 
 <details>
-<summary><strong>metadata-audit.sh</strong> — validate metadata against library</summary>
+<summary><strong>metadata-audit.sh</strong> — validate metadata files</summary>
 
-Checks Kometa metadata YAML files against actual library content. Finds orphaned entries, missing metadata, duplicates, and season/episode gaps.
-
-#### Config keys used
-
-`tools.kometa` (metadata dir derived), `media.*`
+Audits custom metadata files (posters, sort titles, summaries) against Plex items to find orphaned definitions or items needing manual fixes.
 
 #### Output
 
-- Report: `reports/metadata-audit.json` (overwritten each run)
-
-#### What it checks
-
-- Orphaned metadata (entries for content not in library)
-- Missing metadata (library items without custom entries)
-- Duplicate entries across files
-- Season/episode coverage gaps
-
-#### Features
-
-- Structured entries with TMDb IDs and links
-- Severity levels and action suggestions
-- Coverage percentages
-- Per-source breakdown
-- Last-clean date tracking
-
-#### Dependencies
-
-`python3`, `python3-yaml`, `jq`, `curl`
+- Report: `reports/metadata-audit.json`
 
 </details>
 
@@ -269,13 +199,6 @@ Scans for non-HEVC/non-AV1 files and generates a prioritized re-encode list sort
 
 - Report: `reports/encode-queue.json` (overwritten each run)
 
-#### Features
-
-- HDR detection
-- Batch grouping
-- Savings by codec breakdown
-- Exclude list support (`encode-exclude.txt`)
-
 #### Usage
 
 ```bash
@@ -284,142 +207,49 @@ Scans for non-HEVC/non-AV1 files and generates a prioritized re-encode list sort
 ./encode-queue.sh --min-size=2 --limit=20      # Only >2GB, top 20
 ```
 
-#### Dependencies
-
-`ffprobe` (ffmpeg), `jq`, `curl`
-
 </details>
 
 <details>
 <summary><strong>episode-gaps.sh</strong> — find TV shows with missing episodes</summary>
 
-Compares Plex TV show episode counts against TMDB aired episodes. Reports shows where you have fewer episodes than have actually aired. Ignores specials (Season 0) and unaired future episodes.
+Compares Plex TV show episode counts against TMDB aired episodes. Reports shows where you have fewer episodes than have actually aired.
 
 #### Config keys used
 
-`plex.url`, `plex.token` (Plex API), TMDb API key (hardcoded, same as Kometa)
+`plex.url`, `plex.token`, TMDb API key
 
 #### Output
 
-- Report: `reports/episode-gaps.json` (overwritten each run)
-
-#### Features
-
-- Filters by air date (only counts aired episodes)
-- Ignores specials/Season 0
-- Per-season breakdown of missing episodes
-- TMDB links for each show
-- Health status based on gap count
-
-#### Usage
-
-```bash
-./episode-gaps.sh                    # Full run with Discord
-./episode-gaps.sh --quiet            # For cron
-./episode-gaps.sh --no-discord       # No notifications
-```
-
-#### Dependencies
-
-`jq`, `curl`
+- Report: `reports/episode-gaps.json`
 
 </details>
 
 <details>
 <summary><strong>storage-report.sh</strong> — disk usage by folder, codec, resolution</summary>
 
-Scans a media directory and generates a detailed storage report. Auto-detects TV (show/season) vs Movies (flat) structure. Compares against previous run. When no directory is specified, scans both TV Shows and Movies and produces a combined report.
-
-#### Config keys used
-
-`media.tv` (default scan directory)
+Scans media directories and generates a detailed storage report.
 
 #### Output
 
-- Report: `reports/storage-report.json` (overwritten each run)
-
-#### Features
-
-- Per-library percentage breakdown
-- Resolution buckets per item
-- Top 10 by size
-- Human-readable sizes
-
-#### Usage
-
-```bash
-./storage-report.sh                            # Both libraries (combined report)
-./storage-report.sh "/mnt/Media/Movies"        # Movies only
-./storage-report.sh "/mnt/Media/TV Shows"      # TV Shows only
-```
-
-#### Dependencies
-
-`ffprobe` (ffmpeg), `jq`, `curl`
+- Report: `reports/storage-report.json`
 
 </details>
 
 <details>
 <summary><strong>plex-vs-arrs.sh</strong> — compare Plex library against Radarr/Sonarr</summary>
 
-Compares Plex library content against Radarr (movies) and Sonarr (TV shows) via their APIs. Finds items that exist in one system but not the other, detects duplicates, and performs fuzzy title matching for items with mismatched IDs.
-
-#### Config keys used
-
-`plex.*`, `api_keys.radarr`, `api_keys.sonarr`
+Compares Plex library content against Radarr (movies) and Sonarr (TV shows) via their APIs. Finds items that exist in one system but not the other.
 
 #### Output
 
-- Report: `reports/plex-vs-arrs.json` (overwritten each run)
-
-#### What it checks
-
-- Movies in Plex but not in Radarr (and vice versa)
-- TV Shows in Plex but not in Sonarr (and vice versa)
-- Fuzzy title matching for different IDs pointing to the same content
-- Duplicate entries (same TMDb/TVDb ID appearing multiple times in Plex)
-- Items without usable IDs
-
-#### Dependencies
-
-`jq`, `curl`
+- Report: `reports/plex-vs-arrs.json`
 
 </details>
 
 <details>
 <summary><strong>media-analyzer.sh</strong> — filter/analyze video files</summary>
 
-Scans video files, probes each for codec and resolution, filters by mode. Supports scanning multiple directories.
-
-#### Config keys used
-
-`media.*`
-
-#### Modes
-
-| Mode | Description |
-|------|-------------|
-| `all` | Full analysis (default) |
-| `non-hevc` | Files NOT encoded in HEVC/x265 |
-| `hevc` | HEVC/x265 files only |
-| `av1` | AV1 files only |
-| `h264` | H.264/x264 files only |
-| `non-hd` | Below 720p |
-| `4k` | 2160p+ files |
-| `large` | Files exceeding size threshold |
-
-#### Usage
-
-```bash
-./media-analyzer.sh non-hevc "/mnt/Media/Movies"
-./media-analyzer.sh av1
-./media-analyzer.sh all "/mnt/Media/TV Shows" "/mnt/Media/Movies"
-./media-analyzer.sh --quiet large "/mnt/Media/TV Shows"
-```
-
-#### Dependencies
-
-`ffprobe` (ffmpeg), `jq`, `curl`
+Scans video files, probes each for codec and resolution, filters by mode.
 
 </details>
 
@@ -428,14 +258,6 @@ Scans video files, probes each for codec and resolution, filters by mode. Suppor
 
 Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa) inside its Docker container with different options.
 
-#### Options
-
-- Full run (all libraries)
-- Ignore schedules
-- Per-library (Movies / TV Shows)
-- Per-mode (metadata, collections, overlays)
-- Delete all collections
-
 </details>
 
 ---
@@ -443,6 +265,9 @@ Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa
 ## Crontab Setup
 
 ```cron
+# Every 1 minute: PiBoard data collector
+* * * * * /home/felix/kometa/scripts/piboard-data.sh
+
 # Health check (every 30 minutes)
 */30 * * * * bash ~/kometa/scripts/healthcheck.sh
 
@@ -454,9 +279,6 @@ Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa
 
 # Metadata audit (Sundays 02:00)
 0 2 * * 0 bash ~/kometa/scripts/metadata-audit.sh --quiet
-
-# Plex vs ARRs comparison (Sundays 02:30)
-30 2 * * 0 bash ~/kometa/scripts/plex-vs-arrs.sh --quiet
 
 # Episode gaps (Sundays 03:00)
 0 3 * * 0 bash ~/kometa/scripts/episode-gaps.sh --quiet
@@ -472,6 +294,9 @@ Menu-driven interface for running [Kometa](https://github.com/Kometa-Team/Kometa
 
 # Archive reports (daily 05:30)
 30 5 * * * bash ~/kometa/scripts/archive-reports.sh --quiet
+
+# Optional / Manual: Plex vs ARRs comparison
+# 30 2 * * 0 bash ~/kometa/scripts/plex-vs-arrs.sh --quiet
 ```
 
 The Docker-based services have their own internal schedules:
@@ -487,18 +312,6 @@ The Docker-based services have their own internal schedules:
 ## Discord Notifications
 
 All scripts share a single `discord_notify` function defined in `config.sh`. No per-script notification code needed.
-
-#### Levels
-
-| Level | Webhook | Use case |
-|-------|---------|----------|
-| `success` | `discord.notifications` | Successful runs, completions |
-| `warning` | `discord.alerts` | Non-critical issues |
-| `error` | `discord.alerts` | Failures, things that need attention |
-
-The footer on every notification automatically includes the hostname, script name, and run duration.
-
-Control which messages are sent via `notifications.on_success` and `notifications.on_failure` in config. Use `--no-discord` per-run to suppress entirely.
 
 ---
 
@@ -520,6 +333,9 @@ Control which messages are sent via `notifications.on_success` and `notification
 ├── storage-report.sh
 ├── encode-queue.sh
 ├── episode-gaps.sh
+├── plex-vs-arrs.sh         # Compare Plex vs Radarr/Sonarr
+├── piboard-data.sh         # PiBoard system & service data collector
+├── piboard-api.py          # PiBoard action API sidecar server
 ├── logs/                   # Per-script log subdirectories (gitignored)
 │   ├── archive-reports/
 │   ├── backup/
