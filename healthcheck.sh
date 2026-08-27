@@ -56,6 +56,13 @@ for service in "$PLEX_SERVICE" "${ARR_SERVICES[@]}"; do
     fi
 done
 
+# Check Tailscale (remote access VPN)
+if ! systemctl is-active --quiet tailscaled 2>/dev/null; then
+    WARNINGS+=("Tailscale (tailscaled) is not running — remote access unavailable")
+elif ! tailscale status >/dev/null 2>&1; then
+    WARNINGS+=("Tailscale is running but not connected (may need re-auth: sudo tailscale up)")
+fi
+
 # Check Docker containers (auto-restart if down)
 RESTARTED=()
 for container in "${DOCKER_CONTAINERS[@]}"; do
