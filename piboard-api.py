@@ -176,6 +176,13 @@ ALLOWED_TASKS = {
         "description": "Restart PiBoard",
         "category": "docker",
     },
+    "restart-aura": {
+        "type": "command",
+        "command": "docker compose restart",
+        "cwd": "aura",
+        "description": "Restart AURA",
+        "category": "docker",
+    },
 
     # --- Docker: update (pull + recreate) ---
     "update-kometa": {
@@ -211,6 +218,13 @@ ALLOWED_TASKS = {
         "command": "docker compose pull && docker compose up -d",
         "cwd": "piboard",
         "description": "Update PiBoard",
+        "category": "docker",
+    },
+    "update-aura": {
+        "type": "command",
+        "command": "docker compose pull && docker compose up -d",
+        "cwd": "aura",
+        "description": "Update AURA",
         "category": "docker",
     },
 
@@ -367,7 +381,7 @@ ALLOWED_TASKS = {
     "update-all": {
         "type": "command",
         "command": (
-            'for d in kometa umtk imagemaid floppy piboard; do '
+            'for d in kometa umtk imagemaid floppy piboard aura; do '
             'cd ~/docker/$d && docker compose pull && docker compose up -d; '
             'done'
         ),
@@ -379,7 +393,7 @@ ALLOWED_TASKS = {
 }
 
 # Containers that support log viewing
-LOGGABLE_CONTAINERS = ["kometa", "umtk", "imagemaid", "floppy", "piboard", "floppy-redis", "radarr", "sonarr", "bazarr"]
+LOGGABLE_CONTAINERS = ["kometa", "umtk", "imagemaid", "floppy", "piboard", "floppy-redis", "radarr", "sonarr", "bazarr", "aura"]
 
 # Log file sources (non-docker)
 LOG_FILE_SOURCES = {
@@ -459,6 +473,7 @@ TASK_LOG_SOURCES = {
     "restart-imagemaid": "imagemaid",
     "restart-floppy": "floppy",
     "restart-piboard": "piboard",
+    "restart-aura": "aura",
     "plex-restart": "plex",
     "plex-clean": "plex",
     "plex-scan": "plex",
