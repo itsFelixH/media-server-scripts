@@ -63,6 +63,18 @@ net_internet_ms=""
 [ -n "$net_gateway" ] && ping -c1 -W2 "$net_gateway" >/dev/null 2>&1 && net_gateway_ok="true"
 net_internet_ms=$(ping -c1 -W3 8.8.8.8 2>/dev/null | grep -oP 'time=\K[0-9.]+' || echo "")
 
+# Tailscale status
+ts_ip=""
+ts_status="off"
+if systemctl is-active --quiet tailscaled 2>/dev/null; then
+    ts_ip=$(tailscale ip -4 2>/dev/null || echo "")
+    if [ -n "$ts_ip" ]; then
+        ts_status="connected"
+    else
+        ts_status="stopped"
+    fi
+fi
+
 # ===== MEDIUM DATA (every 5 minutes) =====
 
 SERVICES_CACHE="$DATA_DIR/.services.cache"
@@ -676,6 +688,8 @@ jq -n \
     --arg net_gateway "${net_gateway:-}" \
     --argjson net_gateway_ok "$net_gateway_ok" \
     --arg net_internet_ms "${net_internet_ms:-}" \
+    --arg ts_ip "${ts_ip:-}" \
+    --arg ts_status "${ts_status:-off}" \
     --argjson disk_growth "$growth_json" \
     --argjson plex "$plex_json" \
     --argjson kometa_status "$kometa_status_json" \
@@ -715,7 +729,7 @@ jq -n \
         containers: $containers,
         last_runs: $last_runs,
         library: $library,
-        network: { ip: $net_ip, gateway: $net_gateway, gateway_ok: $net_gateway_ok, internet_ms: $net_internet_ms },
+        network: { ip: $net_ip, gateway: $net_gateway, gateway_ok: $net_gateway_ok, internet_ms: $net_internet_ms, tailscale: { ip: $ts_ip, status: $ts_status } },
         disk_growth: $disk_growth,
         plex: $plex,
         kometa_status: $kometa_status,
