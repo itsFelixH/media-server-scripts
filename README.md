@@ -15,6 +15,7 @@ Maintenance and monitoring scripts for a [Plex](https://www.plex.tv/) media serv
 | [Radarr](https://radarr.video/) | Movie management and downloads | Always running (Docker) | |
 | [Sonarr](https://sonarr.tv/) | TV show management and downloads | Always running (Docker) | |
 | [Bazarr](https://bazarr.media/) | Subtitle downloads | Always running (Docker) | |
+| [AURA](https://github.com/mediux-team/AURA) | Artwork management via [MediUX](https://mediux.pro/) | Always running (Docker), AutoDownload daily at 04:00 | [Docs](https://mediux-team.github.io/AURA/) |
 
 The scripts monitor, maintain, and report on this stack. They don't replace any of these tools — they wrap around them to keep everything healthy and give you visibility into your library.
 
@@ -80,7 +81,7 @@ Monitors system resources and service health. Runs silently, logs output, and se
 
 #### Checks performed
 
-- **Services**: Plex (`plexmediaserver`), Kometa, UMTK, ImageMaid, Floppy, PiBoard, Radarr, Sonarr, Bazarr
+- **Services**: Plex (`plexmediaserver`), Kometa, UMTK, ImageMaid, Floppy, PiBoard, Radarr, Sonarr, Bazarr, AURA
 - **APIs**: Plex, Radarr, Sonarr, Bazarr, UMTK
 - **Disk**: Mount check (`/mnt/Media`), disk usage percentage
 - **Hardware**: CPU temperature (Raspberry Pi `vcgencmd` or `/sys/class/thermal/`), RAM usage
@@ -305,6 +306,7 @@ The Docker-based services have their own internal schedules:
 |---------|----------|------------|
 | Kometa | Daily at 05:00 | `KOMETA_TIMES` env var in compose |
 | UMTK | Daily at 02:00 | Internal cron in container |
+| AURA | AutoDownload daily at 04:00 | Internal cron in container |
 | ImageMaid | Weekly Sundays at 07:00 | `SCHEDULE` in `.env` |
 
 ---
@@ -355,3 +357,4 @@ All scripts share a single `discord_notify` function defined in `config.sh`. No 
 - [Floppy](https://github.com/dannyvfilms/Floppy) — Self-hosted media tracker
 - [Simkl](https://simkl.com/) — External media tracker (cloud, syncs via Plex webhook)
 - [ImageMaid](https://github.com/Kometa-Team/ImageMaid) — Plex image cleanup and DB optimization
+- [AURA](https://github.com/mediux-team/AURA) — Artwork management via [MediUX](https://mediux.pro/)
