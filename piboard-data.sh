@@ -87,7 +87,15 @@ if cache_stale "$SERVICES_CACHE" 300; then
     # Services
     _svc_json="[]"
     for svc in "$PLEX_SERVICE" "${ARR_SERVICES[@]}"; do
-        status=$(systemctl is-active "$svc" 2>/dev/null || echo "unknown")
+        svc="${svc//$'\r'/}"
+        [ -z "$svc" ] && continue
+        status=$(systemctl is-active "$svc" 2>/dev/null) || {
+            if [ "$svc" = "rpimonitor" ] || [ "$svc" = "rpimonitord" ]; then
+                status=$(systemctl is-active rpimonitor 2>/dev/null || systemctl is-active rpimonitord 2>/dev/null || (nc -z 127.0.0.1 8888 2>/dev/null && echo "active") || echo "inactive")
+            else
+                status="inactive"
+            fi
+        }
         _svc_json=$(echo "$_svc_json" | jq --arg n "$svc" --arg s "$status" '. + [{"name":$n,"status":$s}]')
     done
 
