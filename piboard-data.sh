@@ -119,6 +119,10 @@ if cache_stale "$SERVICES_CACHE" 300; then
         _t=$(stat -c '%Y' "$IMAGEMAID_CONFIG_DIR/logs/imagemaid.log")
         _add_lr "ImageMaid" "$_t"
     }
+    [ -f "$HOME/docker/aura/config/logs/aura.log" ] && {
+        _t=$(stat -c '%Y' "$HOME/docker/aura/config/logs/aura.log")
+        _add_lr "Aura" "$_t"
+    }
     # Script-based last runs (from log directories)
     for _sname in healthcheck backup archive-reports maintenance library-catalog metadata-audit encode-queue storage-report media-analyzer episode-gaps plex-vs-arrs; do
         _sl=$(ls -t "$LOG_DIR/$_sname"/${_sname}_*.log 2>/dev/null | head -1)
@@ -612,6 +616,10 @@ if cache_stale "$SCHED_CACHE" 300; then
             *daily*)     _im_day="daily"; _im_label="$_im_time" ;;
         esac
         _add_sched "ImageMaid" "$_im_label" "$_im_h" "$_im_m" 0 "$_im_day" "docker" "Removes bloated images, cleans PhotoTranscoder, optimizes DB"
+    fi
+    # Aura: daily AutoDownload at 04:00 (Docker internal)
+    if [ -d "$HOME/docker/aura" ]; then
+        _add_sched "Aura" "04:00" 4 0 0 "daily" "docker" "AutoDownloads posters, backdrops & title cards from MediUX"
     fi
 
     echo "$_sched_json" > "$DATA_DIR/schedule.json"
