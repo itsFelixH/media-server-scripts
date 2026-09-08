@@ -544,6 +544,7 @@ if cache_stale "$SCHED_CACHE" 300; then
             *storage-report.sh*) _task_name="Storage Report"; _desc="Storage usage report with resolution/codec breakdown" ;;
             *archive-reports.sh*) _task_name="Archive Reports"; _desc="Archives changed reports to /mnt/Media/reports/" ;;
             *episode-gaps.sh*)   _task_name="Episode Gaps"; _desc="Finds TV shows with missing episodes vs TMDB" ;;
+            *plex-vs-arrs.sh*)   _task_name="Plex vs ARRs"; _desc="Compares Plex library against Radarr and Sonarr" ;;
             *piboard-data.sh*)   continue ;; # Skip self — runs every minute, not interesting
             *)                   continue ;; # Skip unrecognized entries
         esac
