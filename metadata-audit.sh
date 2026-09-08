@@ -10,7 +10,7 @@
 #   -q, --quiet       Suppress terminal output (log only)
 #   --no-discord      Skip Discord notification
 
-VERSION="2.0"
+VERSION="2.1"
 
 ####### HELP #######
 show_help() {
@@ -21,7 +21,8 @@ Usage: metadata-audit.sh [options]
 
 Audits:
   - Movies & TV Shows with AURA / MediUX sets applied
-  - Movies & TV Shows missing MediUX artwork sets
+  - Items with multiple / split MediUX sets (e.g. Posters + Title Cards)
+  - Conflicting overlapping sets per library item
   - TV Shows missing episode title card sets
   - Plex items with missing posters or unmatched TMDb/TVDb IDs
   - MediUX creator breakdown and set links
@@ -91,7 +92,6 @@ echo "=== Plex & AURA Artwork Audit v$VERSION ==="
 echo "Date: $(date '+%Y-%m-%d %H:%M:%S')"
 echo
 
-# Export variables for the embedded Python audit engine
 export PLEX_URL PLEX_TOKEN REPORT_FILE BASELINE_FILE AURA_DB START_TIME
 
 python3 - <<'PYEOF'
@@ -226,30 +226,43 @@ for d in root_t.findall("Directory"):
 
 print(f"  Total Plex TV Shows: {len(plex_shows)}")
 
-# 3. Query AURA SQLite DB
+# 3. Query AURA SQLite DB (aggregating multiple sets per item)
 print("🎨 Querying AURA MediUX database...")
 conn = sqlite3.connect(aura_db_path)
 cur = conn.cursor()
 
+# Query all saved sets for movies
 cur.execute("""
-    SELECT m.rating_key, m.tmdb_id, m.title, p.set_id, p.title, p.user, s.poster_selected, s.backdrop_selected
+    SELECT m.rating_key, m.tmdb_id, m.title, p.set_id, p.title, p.user,
+           s.poster_selected, s.backdrop_selected
     FROM MediaItems m
     JOIN SavedItems s ON m.tmdb_id = s.tmdb_id AND m.library_title = s.library_title
     JOIN PosterSets p ON s.poster_set_id = p.id
     WHERE m.type = 'movie'
 """)
+movie_rows = cur.fetchall()
 aura_movies = {}
-for row in cur.fetchall():
-    aura_movies[str(row[0])] = {
-        "tmdb_id": row[1],
-        "title": row[2],
-        "set_id": row[3],
-        "set_title": row[4],
-        "user": row[5],
-        "poster_selected": bool(row[6]),
-        "backdrop_selected": bool(row[7])
-    }
+for rk, tmdb_id, title, set_id, set_title, user, p_sel, b_sel in movie_rows:
+    rk_str = str(rk)
+    if rk_str not in aura_movies:
+        aura_movies[rk_str] = {
+            "tmdb_id": tmdb_id,
+            "title": title,
+            "sets": [],
+            "poster_selected": False,
+            "backdrop_selected": False
+        }
+    aura_movies[rk_str]["sets"].append({
+        "set_id": set_id,
+        "set_title": set_title,
+        "user": user,
+        "poster": bool(p_sel),
+        "backdrop": bool(b_sel)
+    })
+    if p_sel: aura_movies[rk_str]["poster_selected"] = True
+    if b_sel: aura_movies[rk_str]["backdrop_selected"] = True
 
+# Query all saved sets for shows
 cur.execute("""
     SELECT m.rating_key, m.tmdb_id, m.title, p.set_id, p.title, p.user,
            s.poster_selected, s.backdrop_selected, s.season_poster_selected, s.titlecard_selected
@@ -258,21 +271,61 @@ cur.execute("""
     JOIN PosterSets p ON s.poster_set_id = p.id
     WHERE m.type = 'show'
 """)
+show_rows = cur.fetchall()
 aura_shows = {}
-for row in cur.fetchall():
-    aura_shows[str(row[0])] = {
-        "tmdb_id": row[1],
-        "title": row[2],
-        "set_id": row[3],
-        "set_title": row[4],
-        "user": row[5],
-        "poster_selected": bool(row[6]),
-        "backdrop_selected": bool(row[7]),
-        "season_poster_selected": bool(row[8]),
-        "titlecard_selected": bool(row[9])
-    }
+for rk, tmdb_id, title, set_id, set_title, user, p_sel, b_sel, sp_sel, tc_sel in show_rows:
+    rk_str = str(rk)
+    if rk_str not in aura_shows:
+        aura_shows[rk_str] = {
+            "tmdb_id": tmdb_id,
+            "title": title,
+            "sets": [],
+            "poster_selected": False,
+            "backdrop_selected": False,
+            "season_poster_selected": False,
+            "titlecard_selected": False
+        }
+    aura_shows[rk_str]["sets"].append({
+        "set_id": set_id,
+        "set_title": set_title,
+        "user": user,
+        "poster": bool(p_sel),
+        "backdrop": bool(b_sel),
+        "season_poster": bool(sp_sel),
+        "titlecard": bool(tc_sel)
+    })
+    if p_sel: aura_shows[rk_str]["poster_selected"] = True
+    if b_sel: aura_shows[rk_str]["backdrop_selected"] = True
+    if sp_sel: aura_shows[rk_str]["season_poster_selected"] = True
+    if tc_sel: aura_shows[rk_str]["titlecard_selected"] = True
 
-# Orphaned sets in AURA
+# Check for multi-set and conflicting items
+multi_set_items = []
+conflicting_items = []
+
+for rk, data in list(aura_movies.items()) + list(aura_shows.items()):
+    if len(data["sets"]) > 1:
+        p_count = sum(1 for s in data["sets"] if s.get("poster"))
+        tc_count = sum(1 for s in data["sets"] if s.get("titlecard"))
+        sp_count = sum(1 for s in data["sets"] if s.get("season_poster"))
+        b_count = sum(1 for s in data["sets"] if s.get("backdrop"))
+        
+        is_conflict = (p_count > 1 or tc_count > 1 or sp_count > 1 or b_count > 1)
+        
+        set_details = ", ".join([f"{s['user']} (ID:{s['set_id']})" for s in data["sets"]])
+        multi_set_items.append({
+            "title": data["title"],
+            "set_count": len(data["sets"]),
+            "sets": set_details,
+            "conflict": is_conflict
+        })
+        if is_conflict:
+            conflicting_items.append({
+                "message": f"Conflicting MediUX sets for {data['title']}: {set_details}",
+                "severity": "warning"
+            })
+
+# Orphaned items in AURA (deleted from Plex)
 cur.execute("SELECT rating_key, title, type FROM MediaItems")
 all_aura_media = cur.fetchall()
 orphaned_aura_movies = []
@@ -316,26 +369,29 @@ for rkey, s in sorted(plex_shows.items(), key=lambda x: x[1]["title"].lower()):
             "url": search_url
         })
     else:
-        set_info = aura_shows[rkey]
-        if not set_info["titlecard_selected"]:
-            set_url = f"https://mediux.pro/sets/{set_info['set_id']}" if set_info["set_id"] else None
+        # Check if titlecard was enabled on ANY of the show's sets
+        if not aura_shows[rkey]["titlecard_selected"]:
+            first_set = aura_shows[rkey]["sets"][0]
+            set_url = f"https://mediux.pro/sets/{first_set['set_id']}" if first_set["set_id"] else None
             shows_missing_titlecards.append({
                 "name": s["title"],
                 "year": s["year"],
-                "set_creator": set_info["user"],
+                "set_creator": first_set["user"],
                 "severity": "info",
                 "action": "Enable Title Cards",
                 "url": set_url
             })
 
-# Breakdown by MediUX Creator
+# Breakdown by MediUX Creator across all sets
 by_creator = {}
 for m in aura_movies.values():
-    u = m["user"] or "Unknown"
-    by_creator[u] = by_creator.get(u, 0) + 1
+    for st in m["sets"]:
+        u = st["user"] or "Unknown"
+        by_creator[u] = by_creator.get(u, 0) + 1
 for s in aura_shows.values():
-    u = s["user"] or "Unknown"
-    by_creator[u] = by_creator.get(u, 0) + 1
+    for st in s["sets"]:
+        u = st["user"] or "Unknown"
+        by_creator[u] = by_creator.get(u, 0) + 1
 
 by_source_list = [{"source": u, "orphaned": 0, "count": count} for u, count in sorted(by_creator.items(), key=lambda x: x[1], reverse=True)]
 
@@ -350,11 +406,14 @@ for art in missing_movie_posters:
 for art in missing_show_posters:
     issues_list.append({"message": f"Show missing poster: {art['title']}", "severity": "error"})
 
+# Add conflicting sets to warnings/issues
+warnings_list = conflicting_items
+
 # Coverage Calculations
 movie_cov = round((len(aura_movies) / len(plex_movies) * 100), 1) if plex_movies else 0.0
 tv_cov = round((len(aura_shows) / len(plex_shows) * 100), 1) if plex_shows else 0.0
 
-warning_count = len(missing_movie_sets) + len(missing_show_sets) + len(shows_missing_titlecards)
+warning_count = len(missing_movie_sets) + len(missing_show_sets) + len(shows_missing_titlecards) + len(conflicting_items)
 issue_count = len(issues_list)
 orphaned_count = len(orphaned_aura_movies) + len(orphaned_aura_shows)
 
@@ -365,6 +424,9 @@ if issue_count > 0:
 elif tv_cov < 80.0:
     health_status = "warning"
     health_msg = f"MediUX TV coverage at {tv_cov}%"
+elif len(conflicting_items) > 0:
+    health_status = "warning"
+    health_msg = f"{len(conflicting_items)} conflicting MediUX set(s)"
 else:
     health_status = "ok"
     health_msg = f"MediUX coverage: {movie_cov}% Movies, {tv_cov}% TV Shows"
@@ -381,7 +443,7 @@ if os.path.exists(baseline_file):
             comparison = {
                 "prev_issues": prev_issues,
                 "prev_warnings": prev_warnings,
-                "prev_duplicates": 0,
+                "prev_duplicates": len(multi_set_items),
                 "issues_change": issue_count - prev_issues,
                 "warnings_change": warning_count - prev_warnings,
                 "duplicates_change": 0
@@ -412,7 +474,7 @@ report_payload = {
         "warnings": warning_count,
         "orphaned": orphaned_count,
         "upcoming": 0,
-        "duplicates": 0,
+        "duplicates": len(multi_set_items),
         "movie_coverage_pct": movie_cov,
         "tv_coverage_pct": tv_cov
     },
@@ -420,6 +482,8 @@ report_payload = {
         "last_clean": "2026-09-09",
         "by_source": by_source_list[:15],
         "issues": issues_list,
+        "multi_sets": multi_set_items,
+        "conflicts": conflicting_items,
         "orphaned": {
             "movies": orphaned_aura_movies,
             "tv": orphaned_aura_shows
@@ -449,6 +513,8 @@ print(f"📺 TV Shows in Plex:       {len(plex_shows)}")
 print(f"   With MediUX Set:        {len(aura_shows)} ({tv_cov}%)")
 print(f"   Missing MediUX Set:     {len(missing_show_sets)}")
 print(f"   Missing Title Cards:    {len(shows_missing_titlecards)}")
+print(f"🔗 Multi-Set Items:        {len(multi_set_items)} (split poster/titlecard sets)")
+print(f"⚔️  Conflicting Sets:       {len(conflicting_items)}")
 print(f"⚠️  Issues:                 {issue_count}")
 print(f"⚠️  Warnings:               {warning_count}")
 print(f"📁 Report saved to:        {report_file}")
@@ -484,12 +550,14 @@ T_COV=$(jq -r '.summary.tv_coverage_pct // 0' "$REPORT_FILE" 2>/dev/null)
 M_MISS=$(jq -r '.data.missing.movies | length // 0' "$REPORT_FILE" 2>/dev/null)
 T_MISS=$(jq -r '.data.missing.tv | length // 0' "$REPORT_FILE" 2>/dev/null)
 TC_MISS=$(jq -r '.data.titlecards_missing | length // 0' "$REPORT_FILE" 2>/dev/null)
+MULTI_CNT=$(jq -r '.summary.duplicates // 0' "$REPORT_FILE" 2>/dev/null)
 H_STAT=$(jq -r '.health.status // "ok"' "$REPORT_FILE" 2>/dev/null)
 
 DISCORD_DESC="**MediUX Artwork Coverage**
 • Movies: **${M_COV}%** (${M_MISS} without set)
 • TV Shows: **${T_COV}%** (${T_MISS} without set)
-• TV Title Cards: **${TC_MISS}** shows missing cards"
+• TV Title Cards: **${TC_MISS}** shows missing cards
+• Multi-Set Shows: **${MULTI_CNT}** (split poster + titlecard sets)"
 
 if [ "$H_STAT" = "error" ]; then
     discord_notify "error" "❌ Artwork Audit Issues" "$DISCORD_DESC"
