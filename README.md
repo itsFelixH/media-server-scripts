@@ -58,11 +58,11 @@ bash healthcheck.sh
 | `backup.sh` | Archive all configs to media drive | Sundays 01:00 |
 | `archive-reports.sh` | Copy changed reports to archive with date stamps | Daily 05:30 |
 | `library-catalog.sh` | Snapshot library contents with diff tracking | Sundays 01:30 |
-| `metadata-audit.sh` | Validate metadata files against library | Sundays 02:00 |
+| `metadata-audit.sh` | Audit Plex artwork health & AURA/MediUX set coverage | Sundays 02:00 |
 | `encode-queue.sh` | Find re-encoding candidates | 1st of month |
 | `episode-gaps.sh` | Find TV shows with missing episodes vs TMDB | Sundays 03:00 |
 | `storage-report.sh` | Disk usage breakdown by folder/codec/resolution (both libraries) | 28th of month |
-| `plex-vs-arrs.sh` | Compare Plex library against Radarr/Sonarr | Manual / Optional |
+| `plex-vs-arrs.sh` | Compare Plex library against Radarr/Sonarr | Sundays 02:30 |
 | `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
 | `runkometa.sh` | Interactive Kometa runner with library/mode selection | Manual |
 | `piboard-api.py` | PiBoard action button API server (port 5052) | Always running (systemd) |
@@ -177,9 +177,16 @@ Generates a complete catalog of movies and TV shows in Plex. Diffs against the p
 </details>
 
 <details>
-<summary><strong>metadata-audit.sh</strong> — validate metadata files</summary>
+<summary><strong>metadata-audit.sh</strong> — Plex & AURA artwork audit</summary>
 
-Audits custom metadata files (posters, sort titles, summaries) against Plex items to find orphaned definitions or items needing manual fixes.
+Audits artwork health across Plex and tracks AURA / MediUX poster and title card set coverage.
+
+#### Checks performed
+
+- **Plex Artwork**: Verifies poster/backdrop presence and TMDb/TVDb matching
+- **AURA / MediUX Sets**: Tracks which movies and shows have active MediUX sets
+- **Title Cards**: Detects TV shows with MediUX sets that lack episode title cards
+- **Missing Sets**: Generates clickable search links for unlinked movies/shows
 
 #### Output
 
