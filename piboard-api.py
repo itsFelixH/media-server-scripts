@@ -631,15 +631,16 @@ def link_aura_set(payload: dict) -> dict:
     import urllib.request
     import urllib.parse
 
-    set_input = str(payload.get("set_id", "")).strip()
-    media_type = payload.get("media_type", "movie")
-    tmdb_id = str(payload.get("tmdb_id", "")).strip()
-    tvdb_id = str(payload.get("tvdb_id", "")).strip()
-    title = payload.get("title", "")
+    set_input = str(payload.get("set_id", payload.get("setId", ""))).strip()
+    media_type = payload.get("media_type", payload.get("mediaType", "movie"))
+    rating_key = str(payload.get("rating_key", payload.get("ratingKey", ""))).strip()
+    tmdb_id = str(payload.get("tmdb_id", payload.get("tmdbId", ""))).strip()
+    tvdb_id = str(payload.get("tvdb_id", payload.get("tvdbId", ""))).strip()
+    title = payload.get("title", payload.get("name", "")).strip()
     year = payload.get("year", 0)
 
     # 1. Parse numeric set_id
-    m = re.search(r'(?:mediux\.pro/sets/)?(\d+)', set_input)
+    m = re.search(r'(?:(?:sets|boxsets)/)?(\d+)', set_input)
     if not m:
         return {"success": False, "error": f"Invalid MediUX Set ID or URL: '{set_input}'"}
     set_id = m.group(1)
@@ -657,24 +658,39 @@ def link_aura_set(payload: dict) -> dict:
         except Exception:
             pass
 
-    # 3. Locate item in Plex to find ratingKey
+    # 3. Locate item in Plex to find ratingKey and tmdb_id if missing
     section_key = "4" if media_type == "movie" else "5"
-    rating_key = None
     if plex_token:
         try:
-            plex_url = f"http://127.0.0.1:32400/library/sections/{section_key}/all?X-Plex-Token={plex_token}"
-            req = urllib.request.Request(plex_url, headers={'Accept': 'application/json'})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                pdata = json.loads(resp.read().decode('utf-8'))
-                for item in pdata.get('MediaContainer', {}).get('Metadata', []):
-                    item_title = item.get('title', '')
-                    item_year = item.get('year', 0)
-                    if title and title.lower() == item_title.lower() and (not year or abs(int(year) - int(item_year)) <= 1):
-                        rating_key = str(item.get('ratingKey'))
-                        title = item_title
-                        year = item_year
-                        break
-        except Exception:
+            if not rating_key:
+                plex_url = f"http://127.0.0.1:32400/library/sections/{section_key}/all?X-Plex-Token={plex_token}"
+                req = urllib.request.Request(plex_url, headers={'Accept': 'application/json'})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    pdata = json.loads(resp.read().decode('utf-8'))
+                    for item in pdata.get('MediaContainer', {}).get('Metadata', []):
+                        item_title = item.get('title', '')
+                        item_year = item.get('year', 0)
+                        if title and title.lower() == item_title.lower() and (not year or abs(int(year) - int(item_year)) <= 1):
+                            rating_key = str(item.get('ratingKey'))
+                            title = item_title
+                            year = item_year
+                            break
+
+            # If we have rating_key, fetch exact TMDb / TVDb GUID from Plex metadata
+            if rating_key and (not tmdb_id or not tvdb_id):
+                meta_url = f"http://127.0.0.1:32400/library/metadata/{rating_key}?X-Plex-Token={plex_token}"
+                req = urllib.request.Request(meta_url, headers={'Accept': 'application/json'})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    mdata = json.loads(resp.read().decode('utf-8'))
+                    meta_items = mdata.get('MediaContainer', {}).get('Metadata', [])
+                    if meta_items:
+                        for g in meta_items[0].get('Guid', []):
+                            gid = g.get('id', '')
+                            if gid.startswith('tmdb://') and not tmdb_id:
+                                tmdb_id = gid.replace('tmdb://', '')
+                            elif gid.startswith('tvdb://') and not tvdb_id:
+                                tvdb_id = gid.replace('tvdb://', '')
+        except Exception as e:
             pass
 
     # 4. Fetch MediUX set info
