@@ -221,16 +221,21 @@ if cache_stale "$REPORTS_CACHE" 3600; then
         _lib_json=$(jq '{movies: .summary.movies, shows: .summary.tv_shows, episodes: .summary.episodes}' "$REPORT_DIR/library-catalog.json" 2>/dev/null || echo '{}')
     fi
 
-    # Audit
+    # Audit (v2: AURA / artwork health metrics)
     _aud_json='{}'
     if [ -f "$REPORT_DIR/metadata-audit.json" ]; then
         _aud_ts=$(stat -c '%Y' "$REPORT_DIR/metadata-audit.json")
         _aud_json=$(jq --argjson ts "${_aud_ts:-0}" '{
+            movie_coverage_pct: .summary.movie_coverage_pct,
+            tv_coverage_pct: .summary.tv_coverage_pct,
             orphaned: .summary.orphaned,
             warnings: .summary.warnings,
             duplicates: .summary.duplicates,
             issues: .summary.issues,
-            upcoming: .summary.upcoming,
+            upcoming: (.summary.upcoming // 0),
+            collections_missing_art: (.summary.collections_missing_art // 0),
+            top_creator: (.data.by_source[0].source // "Unknown"),
+            top_creator_count: (.data.by_source[0].count // 0),
             prev_warnings: (.comparison.prev_warnings // 0),
             prev_issues: (.comparison.prev_issues // 0),
             prev_duplicates: (.comparison.prev_duplicates // 0),
