@@ -6,3 +6,7 @@ reports/
 
 # Sensitive config (contains API keys, tokens, webhooks)
 config.yml
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
