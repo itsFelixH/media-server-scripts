@@ -22,6 +22,7 @@ import glob
 import json
 import os
 import subprocess
+import signal
 import threading
 import time
 import uuid
@@ -158,6 +159,21 @@ ALLOWED_TASKS = {
         "cwd": "umtk",
         "description": "Restart UMTK",
         "category": "docker",
+    },
+    "imagemaid-run": {
+        "type": "command",
+        "command": "docker exec imagemaid python imagemaid.py -oo",
+        "cwd": None,
+        "description": "Run ImageMaid (image cleanup & cache prune)",
+        "category": "docker",
+    },
+    "docker-prune": {
+        "type": "command",
+        "command": "docker system prune -f",
+        "cwd": None,
+        "description": "Safe Docker prune (stopped containers, dangling images)",
+        "category": "docker",
+        "confirm": True,
     },
     "restart-imagemaid": {
         "type": "command",
@@ -464,6 +480,8 @@ def resolve_command(name, task):
 
 # Map task names to their log sources (for job response)
 TASK_LOG_SOURCES = {
+    "imagemaid-run": "imagemaid",
+    "docker-prune": None,
     "healthcheck": "healthcheck",
     "backup": "backup",
     "maintenance": "maintenance",
@@ -499,6 +517,10 @@ jobs_lock = threading.Lock()
 
 # Prevent running the same task concurrently
 running_tasks = set()
+active_processes = {}
+active_processes_lock = threading.Lock()
+cancelled_jobs = set()
+cancelled_jobs_lock = threading.Lock()
 running_lock = threading.Lock()
 
 
@@ -551,7 +573,6 @@ def run_task(job_id, name, task):
         cmd = ["bash", str(script_path)] + task.get("args", [])
         cwd = str(SCRIPTS_DIR)
     else:
-        # command type — run via bash -c
         command_str = resolve_command(name, task)
         cmd = ["bash", "-c", command_str]
         cwd_name = task.get("cwd")
@@ -564,11 +585,15 @@ def run_task(job_id, name, task):
             stderr=subprocess.STDOUT,
             cwd=cwd,
             env=env,
+            start_new_session=True,
         )
 
         with jobs_lock:
             jobs[job_id]["pid"] = proc.pid
             jobs[job_id]["status"] = "running"
+
+        with active_processes_lock:
+            active_processes[job_id] = proc
 
         # Read output (keep last 30 lines for debugging)
         output_lines = []
@@ -582,9 +607,16 @@ def run_task(job_id, name, task):
 
         proc.wait()
 
+        with cancelled_jobs_lock:
+            was_cancelled = job_id in cancelled_jobs
+
         with jobs_lock:
-            jobs[job_id]["status"] = "done" if proc.returncode == 0 else "failed"
-            jobs[job_id]["exit_code"] = proc.returncode
+            if was_cancelled:
+                jobs[job_id]["status"] = "cancelled"
+                jobs[job_id]["exit_code"] = -15
+            else:
+                jobs[job_id]["status"] = "done" if proc.returncode == 0 else "failed"
+                jobs[job_id]["exit_code"] = proc.returncode
             jobs[job_id]["end_time"] = time.time()
             jobs[job_id]["output"] = output_lines[-20:]
         save_jobs()
@@ -606,8 +638,66 @@ def run_task(job_id, name, task):
         save_jobs()
 
     finally:
+        with active_processes_lock:
+            active_processes.pop(job_id, None)
         with running_lock:
             running_tasks.discard(name)
+
+
+def kill_job(job_id: str) -> dict:
+    """Terminate an active job and its process group."""
+    with active_processes_lock:
+        proc = active_processes.get(job_id)
+    with jobs_lock:
+        job = jobs.get(job_id)
+
+    if not job:
+        return {"success": False, "error": "Job not found"}
+
+    if job.get("status") != "running" or not proc:
+        return {"success": False, "error": f"Job is not running (status: {job.get('status')})"}
+
+    with cancelled_jobs_lock:
+        cancelled_jobs.add(job_id)
+
+    # Terminate process group
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        pgid = None
+    except Exception:
+        pgid = None
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    if pgid:
+        def force_kill_if_needed(p, pg):
+            time.sleep(1.5)
+            try:
+                if p.poll() is None:
+                    os.killpg(pg, signal.SIGKILL)
+            except Exception:
+                pass
+        threading.Thread(target=force_kill_if_needed, args=(proc, pgid), daemon=True).start()
+
+    with jobs_lock:
+        job["status"] = "cancelled"
+        job["exit_code"] = -15
+        job["end_time"] = time.time()
+    save_jobs()
+
+    with running_lock:
+        running_tasks.discard(job.get("name", ""))
+
+    return {
+        "success": True,
+        "message": f"Cancelled job '{job.get('name')}' ({job_id})",
+        "job_id": job_id,
+        "status": "cancelled"
+    }
 
 
 def cleanup_old_jobs():
@@ -943,6 +1033,16 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "Not found"})
 
     def do_POST(self):
+        path = self.path.split("?")[0].rstrip("/")
+
+        # Cancel / Kill a job
+        if path.startswith("/api/actions/job/") and path.endswith("/kill"):
+            parts = path.split("/")
+            job_id = parts[4] if len(parts) > 4 else ""
+            res = kill_job(job_id)
+            status_code = 200 if res.get("success") else 400
+            self.send_json(status_code, res)
+            return
         path = self.path.split("?")[0].rstrip("/")
 
         # Link a MediUX set to AURA
