@@ -120,6 +120,9 @@ Python API backend running on port 5052 as a systemd user service (`piboard-api.
 | `GET` | `/api/actions/jobs/{id}` | Poll status and log output of a specific job |
 | `POST` | `/api/actions/run` | Trigger script execution (`{"task": "kometa" | "healthcheck" | "backup" | "audit" | ...}`) |
 | `POST` | `/api/actions/aura/link` | 1-click MediUX Set Linker (`{"setId": "...", "ratingKey": "...", "title": "...", "mediaType": "movie"|"show"}`) |
+| `POST` | `/api/actions/job/{id}/kill` | 1-Click Cancel / Terminate running background job (process group SIGTERM -> SIGKILL) |
+| `POST` | `/api/actions/run/imagemaid-run` | Run ImageMaid image bloat cleanup & PhotoTranscoder cache prune |
+| `POST` | `/api/actions/run/docker-prune` | Safe Docker prune (stopped containers, unused networks, dangling images) |
 
 </details>
 
