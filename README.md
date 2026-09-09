@@ -185,8 +185,10 @@ Audits artwork health across Plex and tracks AURA / MediUX poster and title card
 
 - **Plex Artwork**: Verifies poster/backdrop presence and TMDb/TVDb matching
 - **AURA / MediUX Sets**: Tracks which movies and shows have active MediUX sets
-- **Title Cards**: Detects TV shows with MediUX sets that lack episode title cards
-- **Missing Sets**: Generates clickable search links for unlinked movies/shows
+- **Title Cards & Season Posters**: Detects TV shows with MediUX sets that lack episode title cards or season posters
+- **Collection Posters**: Checks Plex Movie & TV collections for custom posters vs auto-generated collages
+- **Orphaned AURA Sets**: Flags database entries for media removed from Plex
+- **Missing Sets**: Generates direct clickable search links for unlinked movies/shows
 
 #### Output
 
