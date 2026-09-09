@@ -249,7 +249,7 @@ for c_sec, c_type in [(movie_section_key, "movie"), (tv_section_key, "show")]:
                     "rating_key": c_key,
                     "item_count": int(c_size) if str(c_size).isdigit() else 0,
                     "has_custom_poster": has_custom_poster,
-                    "search_url": f"https://mediux.pro/search?query={urllib.parse.quote(c_title)}"
+                    "search_url": f"https://www.google.com/search?q=site:mediux.pro+{urllib.parse.quote(c_title)}"
                 })
     except Exception as e:
         print(f"  Note: Could not fetch collections for section {c_sec}: {e}")
@@ -381,7 +381,7 @@ missing_movie_sets = []
 for rkey, m in sorted(plex_movies.items(), key=lambda x: x[1]["title"].lower()):
     if rkey not in aura_movies:
         q_title = urllib.parse.quote(f"{m['title']} {m['year']}" if m.get("year") else m["title"])
-        search_url = f"https://mediux.pro/search?query={q_title}"
+        search_url = f"https://www.google.com/search?q=site:mediux.pro+{q_title}"
         missing_movie_sets.append({
             "name": m["title"],
             "year": m["year"],
@@ -397,7 +397,7 @@ shows_missing_season_posters = []
 for rkey, s in sorted(plex_shows.items(), key=lambda x: x[1]["title"].lower()):
     if rkey not in aura_shows:
         q_title = urllib.parse.quote(f"{s['title']} {s['year']}" if s.get("year") else s["title"])
-        search_url = f"https://mediux.pro/search?query={q_title}"
+        search_url = f"https://www.google.com/search?q=site:mediux.pro+{q_title}"
         missing_show_sets.append({
             "name": s["title"],
             "year": s["year"],
