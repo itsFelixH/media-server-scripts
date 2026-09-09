@@ -25,6 +25,10 @@ import subprocess
 import threading
 import time
 import uuid
+import re
+import sqlite3
+import urllib.request
+import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -168,6 +172,12 @@ ALLOWED_TASKS = {
         "cwd": "floppy",
         "description": "Restart Floppy",
         "category": "docker",
+    },
+    "restart-piboard-api": {
+        "description": "Restart PiBoard API Sidecar",
+        "type": "command",
+        "command": "systemctl --user restart piboard-api.service",
+        "category": "system",
     },
     "restart-piboard": {
         "type": "command",
@@ -614,6 +624,130 @@ def cleanup_old_jobs():
 
 # ===== HTTP HANDLER =====
 
+
+def link_aura_set(payload: dict) -> dict:
+    """Links a MediUX set to an item in AURA.db, registers media items, and schedules audit refresh."""
+    import sqlite3
+    import urllib.request
+    import urllib.parse
+
+    set_input = str(payload.get("set_id", "")).strip()
+    media_type = payload.get("media_type", "movie")
+    tmdb_id = str(payload.get("tmdb_id", "")).strip()
+    tvdb_id = str(payload.get("tvdb_id", "")).strip()
+    title = payload.get("title", "")
+    year = payload.get("year", 0)
+
+    # 1. Parse numeric set_id
+    m = re.search(r'(?:mediux\.pro/sets/)?(\d+)', set_input)
+    if not m:
+        return {"success": False, "error": f"Invalid MediUX Set ID or URL: '{set_input}'"}
+    set_id = m.group(1)
+
+    # 2. Get Plex Token from AURA config
+    aura_cfg_path = Path.home() / "docker" / "aura" / "config" / "config.yaml"
+    plex_token = ""
+    if aura_cfg_path.exists():
+        try:
+            with open(aura_cfg_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if 'ApiToken:' in line:
+                        plex_token = line.split('ApiToken:')[1].strip().strip('"').strip("'")
+                        break
+        except Exception:
+            pass
+
+    # 3. Locate item in Plex to find ratingKey
+    section_key = "4" if media_type == "movie" else "5"
+    rating_key = None
+    if plex_token:
+        try:
+            plex_url = f"http://127.0.0.1:32400/library/sections/{section_key}/all?X-Plex-Token={plex_token}"
+            req = urllib.request.Request(plex_url, headers={'Accept': 'application/json'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                pdata = json.loads(resp.read().decode('utf-8'))
+                for item in pdata.get('MediaContainer', {}).get('Metadata', []):
+                    item_title = item.get('title', '')
+                    item_year = item.get('year', 0)
+                    if title and title.lower() == item_title.lower() and (not year or abs(int(year) - int(item_year)) <= 1):
+                        rating_key = str(item.get('ratingKey'))
+                        title = item_title
+                        year = item_year
+                        break
+        except Exception:
+            pass
+
+    # 4. Fetch MediUX set info
+    set_title = f"{title} Set" if title else f"Set {set_id}"
+    set_creator = "MediUX"
+    try:
+        mediux_url = f"https://api.mediux.pro/api/sets/{set_id}"
+        req = urllib.request.Request(mediux_url, headers={'User-Agent': 'PiBoard/2.0'})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            sdata = json.loads(resp.read().decode('utf-8'))
+            set_title = sdata.get('title') or sdata.get('set', {}).get('title') or set_title
+            set_creator = sdata.get('user') or sdata.get('user_created', {}).get('username') or set_creator
+    except Exception:
+        pass
+
+    # 5. Insert into AURA.db
+    aura_db_path = Path.home() / "docker" / "aura" / "config" / "AURA.db"
+    if not aura_db_path.exists():
+        return {"success": False, "error": f"AURA database not found at {aura_db_path}"}
+
+    conn = sqlite3.connect(aura_db_path)
+    c = conn.cursor()
+
+    lib_title = "Movies" if media_type == "movie" else "TV Shows"
+    item_type = "movie" if media_type == "movie" else "show"
+
+    if rating_key:
+        c.execute("""
+            INSERT OR REPLACE INTO MediaItems (tmdb_id, library_title, edition, rating_key, type, title, year, on_server)
+            VALUES (?, ?, '', ?, ?, ?, ?, 1)
+        """, (tmdb_id or '', lib_title, rating_key, item_type, title, year))
+
+    c.execute("SELECT id FROM PosterSets WHERE set_id=?", (set_id,))
+    row = c.fetchone()
+    if row:
+        poster_set_id = row[0]
+    else:
+        c.execute("""
+            INSERT INTO PosterSets (set_id, type, title, user, date_created, date_updated)
+            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+        """, (set_id, item_type, set_title, set_creator))
+        poster_set_id = c.lastrowid
+
+    c.execute("""
+        INSERT OR REPLACE INTO SavedItems (
+            tmdb_id, library_title, edition, poster_set_id,
+            poster_selected, backdrop_selected, season_poster_selected,
+            special_season_poster_selected, titlecard_selected,
+            autodownload, auto_add_new_collection_items, last_downloaded
+        ) VALUES (?, ?, '', ?, 1, 0, 1, 0, 1, 1, 1, datetime('now'))
+    """, (tmdb_id or '', lib_title, poster_set_id))
+
+    conn.commit()
+    conn.close()
+
+    # 6. Re-trigger metadata audit in background
+    def run_audit_refresh():
+        time.sleep(1)
+        audit_script = SCRIPTS_DIR / "metadata-audit.sh"
+        if audit_script.exists():
+            subprocess.run(["bash", str(audit_script)], capture_output=True)
+
+    threading.Thread(target=run_audit_refresh, daemon=True).start()
+
+    return {
+        "success": True,
+        "message": f"Successfully linked '{title}' to MediUX Set {set_id} ({set_creator}) in AURA!",
+        "title": title,
+        "set_id": set_id,
+        "creator": set_creator
+    }
+
+
 class APIHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Suppress default access logs (noisy for cron-like polling)
@@ -794,6 +928,21 @@ class APIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0].rstrip("/")
+
+        # Link a MediUX set to AURA
+        if path == "/api/actions/aura/link":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b""
+            try:
+                payload = json.loads(body) if body else {}
+            except json.JSONDecodeError:
+                self.send_json(400, {"error": "Invalid JSON payload"})
+                return
+
+            res = link_aura_set(payload)
+            status_code = 200 if res.get("success") else 400
+            self.send_json(status_code, res)
+            return
 
         # Trigger a task
         if path.startswith("/api/actions/run/"):

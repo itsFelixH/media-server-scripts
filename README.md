@@ -109,7 +109,17 @@ Collects system statistics, docker container status, service health, network met
 <details>
 <summary><strong>piboard-api.py</strong> — PiBoard action button API server</summary>
 
-Python API backend running on port 5052 as a systemd user service (`piboard-api.service`). Listens for trigger requests from the PiBoard frontend dashboard to run scripts (e.g. trigger Kometa run, trigger healthcheck, trigger backup).
+Python API backend running on port 5052 as a systemd user service (`piboard-api.service`). Proxied via PiBoard Nginx at `/api/actions/`. Listens for trigger requests from the PiBoard frontend dashboard to run scripts and execute homelab automation actions.
+
+#### Endpoints
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/actions/health` | Healthcheck and service status |
+| `GET` | `/api/actions/jobs` | List recent background task jobs |
+| `GET` | `/api/actions/jobs/{id}` | Poll status and log output of a specific job |
+| `POST` | `/api/actions/run` | Trigger script execution (`{"task": "kometa" | "healthcheck" | "backup" | "audit" | ...}`) |
+| `POST` | `/api/actions/aura/link` | 1-click MediUX Set Linker (`{"setId": "...", "ratingKey": "...", "title": "...", "mediaType": "movie"|"show"}`) |
 
 </details>
 
