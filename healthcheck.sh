@@ -234,6 +234,28 @@ if [ -z "$simkl_http" ] || [ "${simkl_http:0:1}" = "5" ] || [ "$simkl_http" = "0
     ISSUES+=("Simkl API unreachable (HTTP $simkl_http)")
 fi
 
+# Check AURA (MediUX artwork sync)
+aura_status=$(docker inspect --format='{{.State.Status}}' aura 2>/dev/null || echo "not found")
+if [ "$aura_status" != "running" ]; then
+    ISSUES+=("AURA container is not running (status: $aura_status)")
+else
+    aura_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -L "http://localhost:3000/" 2>/dev/null)
+    if [ "$aura_http" != "200" ]; then
+        ISSUES+=("AURA web UI unreachable at http://localhost:3000 (HTTP $aura_http)")
+    elif docker logs aura --tail 30 2>&1 | grep -q "adding onboarding routes only"; then
+        ISSUES+=("AURA is stuck in degraded onboarding mode (database not initialized)")
+    fi
+
+    # Check for stuck processing queue jobs in AURA database (> 60 minutes)
+    AURA_DB="$HOME/docker/aura/config/AURA.db"
+    if [ -f "$AURA_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+        stuck_aura_jobs=$(sqlite3 "$AURA_DB" "SELECT count(*) FROM DownloadQueueJobs WHERE status='processing' AND datetime(started_at) < datetime('now', '-60 minutes');" 2>/dev/null || echo 0)
+        if [ "$stuck_aura_jobs" -gt 0 ]; then
+            WARNINGS+=("AURA has $stuck_aura_jobs stuck download job(s) in queue")
+        fi
+    fi
+fi
+
 # --- Report results ---
 
 # Build current issues fingerprint (sorted, one per line)
