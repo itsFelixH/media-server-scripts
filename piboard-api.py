@@ -820,7 +820,7 @@ def link_aura_set(payload: dict) -> dict:
     else:
         c.execute("""
             INSERT INTO PosterSets (set_id, type, title, user, date_created, date_updated)
-            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%S+00:00', 'now'), strftime('%Y-%m-%d %H:%M:%S+00:00', 'now'))
         """, (set_id, item_type, set_title, set_creator))
         poster_set_id = c.lastrowid
 
@@ -830,7 +830,7 @@ def link_aura_set(payload: dict) -> dict:
             poster_selected, backdrop_selected, season_poster_selected,
             special_season_poster_selected, titlecard_selected,
             autodownload, auto_add_new_collection_items, last_downloaded
-        ) VALUES (?, ?, '', ?, 1, 0, 1, 0, 1, 1, 1, datetime('now'))
+        ) VALUES (?, ?, '', ?, 1, 0, 1, 0, 1, 1, 1, strftime('%Y-%m-%d %H:%M:%S+00:00', 'now'))
     """, (tmdb_id or '', lib_title, poster_set_id))
 
     conn.commit()

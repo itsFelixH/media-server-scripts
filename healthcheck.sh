@@ -242,8 +242,10 @@ else
     aura_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -L "http://localhost:3000/" 2>/dev/null)
     if [ "$aura_http" != "200" ]; then
         ISSUES+=("AURA web UI unreachable at http://localhost:3000 (HTTP $aura_http)")
-    elif docker logs aura --tail 30 2>&1 | grep -q "adding onboarding routes only"; then
+    elif docker logs aura --tail 50 2>&1 | grep -q "adding onboarding routes only" && ! docker logs aura --tail 50 2>&1 | grep -q "adding full routes"; then
         ISSUES+=("AURA is stuck in degraded onboarding mode (database not initialized)")
+    elif docker logs aura --tail 50 2>&1 | grep -Eq "Failed to unmarshal|cannot parse.*Z07:00"; then
+        ISSUES+=("AURA cron jobs failing due to database unmarshal/timestamp parsing error")
     fi
 
     # Check for stuck processing queue jobs in AURA database (> 60 minutes)
@@ -252,6 +254,18 @@ else
         stuck_aura_jobs=$(sqlite3 "$AURA_DB" "SELECT count(*) FROM DownloadQueueJobs WHERE status='processing' AND datetime(started_at) < datetime('now', '-60 minutes');" 2>/dev/null || echo 0)
         if [ "$stuck_aura_jobs" -gt 0 ]; then
             WARNINGS+=("AURA has $stuck_aura_jobs stuck download job(s) in queue")
+        fi
+
+        # Check for invalid timestamps missing timezone in AURA database (and auto-heal)
+        invalid_aura_dates=$(sqlite3 "$AURA_DB" "SELECT (SELECT count(*) FROM SavedItems WHERE length(last_downloaded)=19) + (SELECT count(*) FROM PosterSets WHERE (length(date_created)=19) OR (length(date_updated)=19));" 2>/dev/null || echo 0)
+        if [ "$invalid_aura_dates" -gt 0 ]; then
+            sqlite3 "$AURA_DB" "
+                UPDATE SavedItems SET last_downloaded = last_downloaded || '+00:00' WHERE length(last_downloaded) = 19;
+                UPDATE ImageFiles SET image_last_updated = image_last_updated || '+00:00' WHERE length(image_last_updated) = 19;
+                UPDATE PosterSets SET date_created = date_created || '+00:00' WHERE length(date_created) = 19;
+                UPDATE PosterSets SET date_updated = date_updated || '+00:00' WHERE length(date_updated) = 19;
+            " 2>/dev/null
+            WARNINGS+=("AURA database had $invalid_aura_dates un-offset timestamps (auto-healed)")
         fi
     fi
 fi
