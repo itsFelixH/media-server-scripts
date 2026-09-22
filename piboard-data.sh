@@ -12,6 +12,10 @@
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
 
+# Prevent concurrent runs
+exec 200>/tmp/piboard-data.lock
+flock -n 200 || exit 0
+
 DATA_DIR="$HOME/docker/piboard/data"
 OUTPUT="$DATA_DIR/system-status.json"
 mkdir -p "$DATA_DIR"
@@ -352,6 +356,7 @@ if [ "$TODAY" != "$_last_updates_check" ]; then
 fi
 
 updates_json=$(cat "$DATA_DIR/.updates.json" 2>/dev/null || echo '{}')
+[ -z "$updates_json" ] || ! echo "$updates_json" | jq . >/dev/null 2>&1 && updates_json='{}'
 
 # ===== GENRE/DECADE DATA (daily — Plex API for full library metadata) =====
 
