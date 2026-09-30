@@ -63,6 +63,27 @@ elif ! tailscale status >/dev/null 2>&1; then
     WARNINGS+=("Tailscale is running but not connected (may need re-auth: sudo tailscale up)")
 fi
 
+# Check PiBoard action API sidecar (systemd user service & port 5052)
+if systemctl --user is-active --quiet piboard-api.service 2>/dev/null; then
+    piboard_api_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://localhost:5052/api/actions/tasks" 2>/dev/null)
+    if [ "$piboard_api_http" != "200" ]; then
+        echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-RESTART: piboard-api HTTP $piboard_api_http, restarting service" >> "$LOG_FILE"
+        systemctl --user restart piboard-api.service 2>/dev/null
+        sleep 2
+        piboard_api_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://localhost:5052/api/actions/tasks" 2>/dev/null)
+        if [ "$piboard_api_http" != "200" ]; then
+            WARNINGS+=("PiBoard action API not responding (HTTP $piboard_api_http)")
+        fi
+    fi
+else
+    echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-START: piboard-api service inactive, starting" >> "$LOG_FILE"
+    systemctl --user restart piboard-api.service 2>/dev/null
+    sleep 2
+    if ! systemctl --user is-active --quiet piboard-api.service 2>/dev/null; then
+        WARNINGS+=("PiBoard action API service (piboard-api.service) is down")
+    fi
+fi
+
 # Check Docker containers (auto-restart if down)
 RESTARTED=()
 for container in "${DOCKER_CONTAINERS[@]}"; do
