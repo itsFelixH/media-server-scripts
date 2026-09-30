@@ -540,14 +540,14 @@ if cache_stale "$SCHED_CACHE" 300; then
         local name="$1" label="$2" hour="$3" min="$4" interval="$5" days="$6" cat="$7" desc="$8"
         _sched_json=$(echo "$_sched_json" | jq \
             --arg name "$name" \
-            --arg label "$label" \
+            --arg lbl "$label" \
             --argjson hour "$hour" \
             --argjson min "$min" \
             --argjson interval "$interval" \
             --arg days "$days" \
             --arg cat "$cat" \
             --arg desc "$desc" \
-            '. + [{name:$name,"label":$label,hour:$hour,min:$min,interval:$interval,days:$days,cat:$cat,desc:$desc}]')
+            '. + [{name:$name,"label":$lbl,hour:$hour,min:$min,interval:$interval,days:$days,cat:$cat,desc:$desc}]')
     }
 
     # --- Parse crontab entries ---
