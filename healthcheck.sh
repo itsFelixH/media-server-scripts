@@ -302,11 +302,13 @@ if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^homeboard$"; then
     fi
 fi
 
-# Check internet connectivity
+# Check internet connectivity & DNS resolution
 has_internet=true
 if ! ping -c 2 -W 3 8.8.8.8 >/dev/null 2>&1 && ! ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1; then
     has_internet=false
     ISSUES+=("No internet connectivity")
+elif ! getent hosts api.themoviedb.org >/dev/null 2>&1 && ! getent hosts raw.githubusercontent.com >/dev/null 2>&1; then
+    WARNINGS+=("DNS resolution failed (nameserver unreachable or degraded)")
 elif ! curl -s --max-time 5 --retry 1 -L -o /dev/null "https://api.themoviedb.org"; then
     WARNINGS+=("TMDb API unreachable (internet may be degraded)")
 fi
