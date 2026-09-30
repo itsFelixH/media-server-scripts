@@ -56,11 +56,24 @@ for service in "$PLEX_SERVICE" "${ARR_SERVICES[@]}"; do
     fi
 done
 
-# Check Tailscale (remote access VPN)
+# Check Tailscale (remote access VPN & auto-reconnect)
 if ! systemctl is-active --quiet tailscaled 2>/dev/null; then
-    WARNINGS+=("Tailscale (tailscaled) is not running — remote access unavailable")
+    echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-START: tailscaled inactive, starting service" >> "$LOG_FILE"
+    sudo systemctl start tailscaled 2>/dev/null
+    sleep 2
+    if ! systemctl is-active --quiet tailscaled 2>/dev/null; then
+        WARNINGS+=("Tailscale (tailscaled) is not running — remote access unavailable")
+    fi
 elif ! tailscale status >/dev/null 2>&1; then
-    WARNINGS+=("Tailscale is running but not connected (may need re-auth: sudo tailscale up)")
+    echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-RECONNECT: tailscale stalled, restarting service" >> "$LOG_FILE"
+    sudo systemctl restart tailscaled 2>/dev/null
+    sleep 3
+    if ! tailscale status >/dev/null 2>&1; then
+        WARNINGS+=("Tailscale is running but not connected (may need re-auth: sudo tailscale up)")
+    else
+        echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-RECONNECT: tailscale recovered successfully" >> "$LOG_FILE"
+        WARNINGS+=("Tailscale connection was stalled and was auto-reconnected")
+    fi
 fi
 
 # Check PiBoard action API sidecar (systemd user service & port 5052)
