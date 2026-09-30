@@ -319,11 +319,25 @@ if [ -z "$latest_umtk" ]; then
     WARNINGS+=("UMTK has not run in over 26 hours")
 fi
 
-# Check Kometa last run (should have run within threshold)
+# Check Kometa last run (should have run within threshold) & hung execution recovery
 if [ -f "$KOMETA_CONFIG/logs/meta.log" ]; then
     kometa_age=$(find "$KOMETA_CONFIG/logs/meta.log" -mmin -$THRESH_TASK_STALE_MIN 2>/dev/null | head -1)
     if [ -z "$kometa_age" ]; then
         WARNINGS+=("Kometa has not run in over 26 hours")
+    fi
+
+    # Check for hung/stalled active run (> 45m idle without 'Finished' status)
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^kometa$"; then
+        if ! tail -n 20 "$KOMETA_CONFIG/logs/meta.log" 2>/dev/null | grep -q "Finished"; then
+            log_mtime=$(stat -c %Y "$KOMETA_CONFIG/logs/meta.log" 2>/dev/null || echo 0)
+            now_ts=$(date +%s)
+            log_idle_min=$(( (now_ts - log_mtime) / 60 ))
+            if [ "$log_idle_min" -gt 45 ]; then
+                echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-HEAL: Kometa run stalled for ${log_idle_min}m without completion, restarting container" >> "$LOG_FILE"
+                docker restart kometa >/dev/null 2>&1
+                WARNINGS+=("Kometa was hung in an incomplete run (idle ${log_idle_min}m) and was auto-restarted")
+            fi
+        fi
     fi
 else
     WARNINGS+=("Kometa log file not found")
