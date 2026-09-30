@@ -79,6 +79,24 @@ if systemctl is-active --quiet tailscaled 2>/dev/null; then
     fi
 fi
 
+# Hardware throttling telemetry
+hw_throttled="0x0"
+command -v vcgencmd >/dev/null 2>&1 && hw_throttled=$(vcgencmd get_throttled 2>/dev/null | awk -F'=' '{print $2}' || echo "0x0")
+
+# Emergency reboot telemetry
+reboot_strikes=0
+[ -f "$LOG_DIR/healthcheck/.reboot_strike_count" ] && reboot_strikes=$(cat "$LOG_DIR/healthcheck/.reboot_strike_count" 2>/dev/null || echo 0)
+last_auto_reboot_ts=0
+[ -f "$LOG_DIR/healthcheck/.last_auto_reboot" ] && last_auto_reboot_ts=$(cat "$LOG_DIR/healthcheck/.last_auto_reboot" 2>/dev/null || echo 0)
+
+# Media drive mount status
+media_mount_ok="false"
+mountpoint -q "$(dirname "$MOVIES_DIR")" 2>/dev/null && media_mount_ok="true"
+
+# DNS resolution status
+dns_resolve_ok="false"
+getent hosts api.themoviedb.org >/dev/null 2>&1 && dns_resolve_ok="true" 
+
 # ===== MEDIUM DATA (every 5 minutes) =====
 
 SERVICES_CACHE="$DATA_DIR/.services.cache"
@@ -529,7 +547,7 @@ if cache_stale "$SCHED_CACHE" 300; then
             --arg days "$days" \
             --arg cat "$cat" \
             --arg desc "$desc" \
-            '. + [{name:$name,label:$label,hour:$hour,min:$min,interval:$interval,days:$days,cat:$cat,desc:$desc}]')
+            '. + [{name:$name,"label":$label,hour:$hour,min:$min,interval:$interval,days:$days,cat:$cat,desc:$desc}]')
     }
 
     # --- Parse crontab entries ---
@@ -729,6 +747,11 @@ jq -n \
     --argjson codec_breakdown_movies "${codec_movies_json:-[]}" \
     --argjson upcoming "$(cat "$DATA_DIR/.upcoming.json" 2>/dev/null || echo '[]')" \
     --argjson recent "$(cat "$DATA_DIR/.recent.json" 2>/dev/null || echo '[]')" \
+    --arg hw_throttled "${hw_throttled:-0x0}" \
+    --argjson reboot_strikes "${reboot_strikes:-0}" \
+    --argjson last_auto_reboot_ts "${last_auto_reboot_ts:-0}" \
+    --argjson media_mount_ok "$media_mount_ok" \
+    --argjson dns_resolve_ok "$dns_resolve_ok" \
     --arg tv_total_size "${tv_total_size:-}" \
     --arg movies_total_size "${movies_total_size:-}" \
     --argjson genres "$genre_json" \
@@ -758,6 +781,13 @@ jq -n \
         library: $library,
         network: { ip: $net_ip, gateway: $net_gateway, gateway_ok: $net_gateway_ok, internet_ms: $net_internet_ms, tailscale: { ip: $ts_ip, status: $ts_status } },
         disk_growth: $disk_growth,
+        health_telemetry: {
+            throttled: $hw_throttled,
+            reboot_strikes: $reboot_strikes,
+            last_auto_reboot_ts: $last_auto_reboot_ts,
+            media_mounted: $media_mount_ok,
+            dns_ok: $dns_resolve_ok
+        },
         plex: $plex,
         kometa_status: $kometa_status,
         kometa_history: $kometa_history,
