@@ -151,6 +151,19 @@ done
 
 # Check disk space (root)
 disk_usage=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
+if [ "$disk_usage" -gt "$THRESH_DISK_ROOT_WARN" ]; then
+    # Auto-prune Plex PhotoTranscoder cache older than 30 days on elevated disk usage
+    PHOTO_CACHE="/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Cache/PhotoTranscoder"
+    if [ -d "$PHOTO_CACHE" ]; then
+        pruned_count=$(find "$PHOTO_CACHE" -type f -mtime +30 2>/dev/null | wc -l)
+        if [ "$pruned_count" -gt 0 ]; then
+            find "$PHOTO_CACHE" -type f -mtime +30 -delete 2>/dev/null
+            echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-PRUNE: deleted $pruned_count aged PhotoTranscoder cache files" >> "$LOG_FILE"
+            disk_usage=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
+            WARNINGS+=("Root disk was at ${disk_usage}%: auto-pruned $pruned_count old PhotoTranscoder cache files")
+        fi
+    fi
+fi
 if [ "$disk_usage" -gt "$THRESH_DISK_ROOT_CRITICAL" ]; then
     ISSUES+=("Root disk at ${disk_usage}%")
 fi
