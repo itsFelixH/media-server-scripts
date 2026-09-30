@@ -335,7 +335,9 @@ else
     if [ -f "$AURA_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
         stuck_aura_jobs=$(sqlite3 "$AURA_DB" "SELECT count(*) FROM DownloadQueueJobs WHERE status='processing' AND datetime(started_at) < datetime('now', '-60 minutes');" 2>/dev/null || echo 0)
         if [ "$stuck_aura_jobs" -gt 0 ]; then
-            WARNINGS+=("AURA has $stuck_aura_jobs stuck download job(s) in queue")
+            sqlite3 "$AURA_DB" "UPDATE DownloadQueueJobs SET status='failed', error_message='Auto-recovered by healthcheck (stuck >60m)' WHERE status='processing' AND datetime(started_at) < datetime('now', '-60 minutes');" 2>/dev/null
+            echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-HEAL: unblocked $stuck_aura_jobs stuck AURA download queue job(s)" >> "$LOG_FILE"
+            WARNINGS+=("AURA had $stuck_aura_jobs stuck download job(s) in queue (auto-unblocked)")
         fi
 
         # Check for invalid timestamps missing timezone in AURA database (and auto-heal)
