@@ -386,6 +386,73 @@ else
     fi
 fi
 
+# --- Emergency Auto-Reboot Engine (Guarded Last Resort) ---
+REBOOT_COUNTER_FILE="$LOG_DIR/healthcheck/.reboot_strike_count"
+REBOOT_COOLDOWN_FILE="$LOG_DIR/healthcheck/.last_auto_reboot"
+REBOOT_COOLDOWN_SEC=$((48 * 3600))  # 48-hour cooldown
+
+needs_emergency_reboot=false
+reboot_reason=""
+
+for issue in "${ISSUES[@]}"; do
+    if [[ "$issue" == *"No internet connectivity"* ]]; then
+        needs_emergency_reboot=true
+        reboot_reason="Persistent network/internet connectivity failure"
+        break
+    elif [[ "$issue" == *"Service $PLEX_SERVICE is down"* ]] || [[ "$issue" == *"auto-restart failed"* ]]; then
+        needs_emergency_reboot=true
+        reboot_reason="Unrecoverable service failure ($issue)"
+        break
+    fi
+done
+
+if [ "$needs_emergency_reboot" = true ]; then
+    strikes=1
+    if [ -f "$REBOOT_COUNTER_FILE" ]; then
+        prev_strikes=$(cat "$REBOOT_COUNTER_FILE" 2>/dev/null || echo 0)
+        strikes=$((prev_strikes + 1))
+    fi
+    echo "$strikes" > "$REBOOT_COUNTER_FILE"
+    echo "[$(date +%Y-%m-%d\ %H:%M)] EMERGENCY REBOOT MONITOR: Strike $strikes/5 for $reboot_reason" >> "$LOG_FILE"
+
+    if [ "$strikes" -ge 5 ]; then
+        last_reboot=0
+        [ -f "$REBOOT_COOLDOWN_FILE" ] && last_reboot=$(cat "$REBOOT_COOLDOWN_FILE" 2>/dev/null || echo 0)
+        now_ts=$(date +%s)
+        time_since_reboot=$((now_ts - last_reboot))
+
+        if [ "$time_since_reboot" -ge "$REBOOT_COOLDOWN_SEC" ]; then
+            # Guard: Check active Plex streaming sessions before rebooting
+            active_streams=0
+            if [ -n "$PLEX_TOKEN" ]; then
+                sessions_xml=$(curl -s --max-time 3 "$PLEX_URL/status/sessions?X-Plex-Token=$PLEX_TOKEN" 2>/dev/null)
+                if [ -n "$sessions_xml" ]; then
+                    active_streams=$(echo "$sessions_xml" | grep -o '<MediaContainer size="[0-9]*"' | grep -o '[0-9]*' | tail -1 || echo 0)
+                fi
+            fi
+
+            if [ "${active_streams:-0}" -gt 0 ]; then
+                echo "[$(date +%Y-%m-%d\ %H:%M)] EMERGENCY REBOOT: Postponed ($active_streams active Plex stream(s) in progress)" >> "$LOG_FILE"
+                WARNINGS+=("Emergency reboot postponed ($active_streams active Plex stream(s) in progress)")
+            else
+                echo "[$(date +%Y-%m-%d\ %H:%M)] EMERGENCY REBOOT: 5/5 strikes reached! Initiating reboot for: $reboot_reason" >> "$LOG_FILE"
+                echo "$now_ts" > "$REBOOT_COOLDOWN_FILE"
+                rm -f "$REBOOT_COUNTER_FILE"
+                discord_notify "error" "🚨 Emergency Auto-Reboot Triggered" "Server has experienced $reboot_reason across 5 consecutive health checks (2.5 hours). Initiating guarded emergency reboot..."
+                sleep 2
+                sudo reboot
+                exit 0
+            fi
+        else
+            hours_left=$(( (REBOOT_COOLDOWN_SEC - time_since_reboot) / 3600 ))
+            echo "[$(date +%Y-%m-%d\ %H:%M)] EMERGENCY REBOOT: 5/5 strikes reached but 48h cooldown active (${hours_left}h remaining)" >> "$LOG_FILE"
+        fi
+    fi
+else
+    # Issues resolved or not eligible — clear strike counter
+    rm -f "$REBOOT_COUNTER_FILE"
+fi
+
 # --- Report results ---
 
 # Build current issues fingerprint (sorted, one per line)
