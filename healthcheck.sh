@@ -222,6 +222,30 @@ if [ -n "$API_KEY_SONARR" ]; then
     fi
 fi
 
+# Check Bazarr web UI (if container is running and not already flagged)
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^bazarr$"; then
+    bazarr_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -L "http://localhost:6767/" 2>/dev/null)
+    if [ "$bazarr_http" != "200" ] && [ "$bazarr_http" != "302" ]; then
+        ISSUES+=("Bazarr web UI not responding at http://localhost:6767 (HTTP $bazarr_http)")
+    fi
+fi
+
+# Check PiBoard dashboard (if container is running)
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^piboard$"; then
+    piboard_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -L "http://localhost:5051/" 2>/dev/null)
+    if [ "$piboard_http" != "200" ]; then
+        ISSUES+=("PiBoard dashboard not responding at http://localhost:5051 (HTTP $piboard_http)")
+    fi
+fi
+
+# Check Homeboard dashboard (if container is running)
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^homeboard$"; then
+    homeboard_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -L "http://localhost:7070/" 2>/dev/null)
+    if [ "$homeboard_http" != "200" ]; then
+        WARNINGS+=("Homeboard dashboard not responding at http://localhost:7070 (HTTP $homeboard_http)")
+    fi
+fi
+
 # Check internet connectivity
 has_internet=true
 if ! ping -c 2 -W 3 8.8.8.8 >/dev/null 2>&1 && ! ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1; then
