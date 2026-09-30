@@ -35,6 +35,10 @@ NO_DISCORD=false
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPTS_DIR/config.sh"
 
+# Ensure systemd user bus environment is present under cron
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+
 LOG_FILE="$LOG_DIR/healthcheck/healthcheck_$(date +%Y%m%d).log"
 LAST_ALERT_FILE="$LOG_DIR/healthcheck/.healthcheck_last_alert"
 mkdir -p "$LOG_DIR/healthcheck"
@@ -76,24 +80,15 @@ elif ! tailscale status >/dev/null 2>&1; then
     fi
 fi
 
-# Check PiBoard action API sidecar (systemd user service & port 5052)
-if systemctl --user is-active --quiet piboard-api.service 2>/dev/null; then
-    piboard_api_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://localhost:5052/api/actions/tasks" 2>/dev/null)
-    if [ "$piboard_api_http" != "200" ]; then
-        echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-RESTART: piboard-api HTTP $piboard_api_http, restarting service" >> "$LOG_FILE"
-        systemctl --user restart piboard-api.service 2>/dev/null
-        sleep 2
-        piboard_api_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://localhost:5052/api/actions/tasks" 2>/dev/null)
-        if [ "$piboard_api_http" != "200" ]; then
-            WARNINGS+=("PiBoard action API not responding (HTTP $piboard_api_http)")
-        fi
-    fi
-else
-    echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-START: piboard-api service inactive, starting" >> "$LOG_FILE"
+# Check PiBoard action API sidecar (port 5052 & systemd user service)
+piboard_api_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://localhost:5052/api/actions/tasks" 2>/dev/null)
+if [ "$piboard_api_http" != "200" ]; then
+    echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-RESTART: piboard-api HTTP $piboard_api_http, restarting service" >> "$LOG_FILE"
     systemctl --user restart piboard-api.service 2>/dev/null
     sleep 2
-    if ! systemctl --user is-active --quiet piboard-api.service 2>/dev/null; then
-        WARNINGS+=("PiBoard action API service (piboard-api.service) is down")
+    piboard_api_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://localhost:5052/api/actions/tasks" 2>/dev/null)
+    if [ "$piboard_api_http" != "200" ]; then
+        WARNINGS+=("PiBoard action API not responding (HTTP $piboard_api_http)")
     fi
 fi
 
@@ -202,7 +197,7 @@ fi
 
 # Check zombie processes (guard against PID leaks)
 zombie_count=$(ps aux 2>/dev/null | awk '$8 ~ /^Z/ { count++ } END { print count+0 }')
-if [ -n "$zombie_count" ] && [ "$zombie_count" -gt 5 ]; then
+if [ -n "$zombie_count" ] && [ "$zombie_count" -gt 15 ]; then
     WARNINGS+=("$zombie_count zombie processes detected")
 fi
 
