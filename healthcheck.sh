@@ -142,15 +142,21 @@ if [ "$disk_usage" -gt "$THRESH_DISK_ROOT_CRITICAL" ]; then
     ISSUES+=("Root disk at ${disk_usage}%")
 fi
 
-# Check disk space (media drive)
+# Check disk space (media drive & auto-remount if dropped)
 MEDIA_MOUNT=$(dirname "$MOVIES_DIR")
+if ! mountpoint -q "$MEDIA_MOUNT" 2>/dev/null; then
+    echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-MOUNT: media drive $MEDIA_MOUNT dropped, attempting mount -a" >> "$LOG_FILE"
+    sudo mount -a 2>/dev/null
+    sleep 2
+fi
+
 if mountpoint -q "$MEDIA_MOUNT" 2>/dev/null; then
     media_usage=$(df "$MEDIA_MOUNT" | awk 'NR==2 {print $5}' | tr -d '%')
     if [ "$media_usage" -gt "$THRESH_DISK_MEDIA_CRITICAL" ]; then
         ISSUES+=("Media drive at ${media_usage}%")
     fi
 else
-    ISSUES+=("Media drive $MEDIA_MOUNT not mounted")
+    ISSUES+=("Media drive $MEDIA_MOUNT not mounted (auto-mount failed)")
 fi
 
 # Check memory
