@@ -393,7 +393,7 @@ check_network() {
     echo "---- NETWORK CONNECTIVITY ----"
     # Test specific services
     curl -s --max-time 5 https://api.themoviedb.org >/dev/null && echo "[✓] TMDB API reachable" || echo "[✗] TMDB API unreachable"
-    curl -s --max-time 5 https://api.simkl.com >/dev/null && echo "[✓] Simkl API reachable" || echo "[✗] Simkl API unreachable"
+    curl -s --max-time 5 -L https://api.simkl.com >/dev/null && echo "[✓] Simkl API reachable" || echo "[✗] Simkl API unreachable"
     curl -s -o /dev/null --max-time 5 -L http://localhost:8000/ && echo "[✓] Floppy reachable" || echo "[✗] Floppy unreachable"
     nslookup example.com >/dev/null 2>&1 && echo "[✓] DNS resolution OK" || echo "[✗] DNS resolution failed"
 }
