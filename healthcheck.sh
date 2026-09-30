@@ -90,11 +90,20 @@ if [ ${#RESTARTED[@]} -gt 0 ]; then
     done
 fi
 
-# Check Docker container health status
+# Check Docker container health status (auto-heal unhealthy containers)
 for container in "${DOCKER_CONTAINERS[@]}"; do
     health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null)
     if [[ "$health" == "unhealthy" ]]; then
-        WARNINGS+=("Container $container is unhealthy")
+        echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-HEAL: container $container is unhealthy, restarting" >> "$LOG_FILE"
+        docker restart "$container" >/dev/null 2>&1
+        sleep 5
+        post_health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null)
+        if [[ "$post_health" == "unhealthy" ]]; then
+            ISSUES+=("Container $container is unhealthy (auto-restart failed)")
+        else
+            echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-HEAL: $container restart initiated (status: ${post_health:-starting})" >> "$LOG_FILE"
+            WARNINGS+=("Container $container was unhealthy and was auto-restarted")
+        fi
     fi
 done
 
