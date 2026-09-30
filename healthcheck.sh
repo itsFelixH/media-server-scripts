@@ -168,6 +168,12 @@ if [ "$swap_total" -gt 0 ]; then
     fi
 fi
 
+# Check zombie processes (guard against PID leaks)
+zombie_count=$(ps aux 2>/dev/null | awk '$8 ~ /^Z/ { count++ } END { print count+0 }')
+if [ -n "$zombie_count" ] && [ "$zombie_count" -gt 5 ]; then
+    WARNINGS+=("$zombie_count zombie processes detected")
+fi
+
 # Check temperature
 for thermal in /sys/class/thermal/thermal_zone*/temp; do
     if [ -r "$thermal" ]; then
