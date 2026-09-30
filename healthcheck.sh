@@ -193,9 +193,11 @@ if [ -n "$API_KEY_SONARR" ]; then
 fi
 
 # Check internet connectivity
-if ! ping -c1 -W5 8.8.8.8 >/dev/null 2>&1; then
+has_internet=true
+if ! ping -c 2 -W 3 8.8.8.8 >/dev/null 2>&1 && ! ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1; then
+    has_internet=false
     ISSUES+=("No internet connectivity")
-elif ! curl -s --max-time 5 -o /dev/null "https://api.themoviedb.org"; then
+elif ! curl -s --max-time 5 --retry 1 -L -o /dev/null "https://api.themoviedb.org"; then
     WARNINGS+=("TMDb API unreachable (internet may be degraded)")
 fi
 
@@ -228,10 +230,12 @@ if [ -z "$floppy_http" ] || [ "${floppy_http:0:1}" = "5" ] || [ "$floppy_http" =
     ISSUES+=("Floppy web UI unreachable (HTTP $floppy_http)")
 fi
 
-# Simkl (external — just verify the API host responds)
-simkl_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "https://api.simkl.com" 2>/dev/null)
-if [ -z "$simkl_http" ] || [ "${simkl_http:0:1}" = "5" ] || [ "$simkl_http" = "000" ]; then
-    ISSUES+=("Simkl API unreachable (HTTP $simkl_http)")
+# Simkl (external — verify API host responds, only if internet is online)
+if [ "$has_internet" = true ]; then
+    simkl_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 --retry 1 --retry-delay 1 -L "https://api.simkl.com" 2>/dev/null)
+    if [ -z "$simkl_http" ] || [ "${simkl_http:0:1}" = "5" ] || [ "$simkl_http" = "000" ]; then
+        WARNINGS+=("Simkl API unreachable (HTTP $simkl_http)")
+    fi
 fi
 
 # Check AURA (MediUX artwork sync)
