@@ -178,6 +178,24 @@ for thermal in /sys/class/thermal/thermal_zone*/temp; do
     fi
 done
 
+# Check hardware throttling & under-voltage (Raspberry Pi telemetry)
+if command -v vcgencmd >/dev/null 2>&1; then
+    throttled_val=$(vcgencmd get_throttled 2>/dev/null | awk -F'=' '{print $2}')
+    if [ -n "$throttled_val" ] && [ "$throttled_val" != "0x0" ]; then
+        throttled_int=$((throttled_val))
+        if (( (throttled_int & 0x1) != 0 )); then
+            ISSUES+=("Hardware under-voltage detected (power supply issue)")
+        elif (( (throttled_int & 0x10000) != 0 )); then
+            WARNINGS+=("Hardware under-voltage has occurred since boot (check power supply)")
+        fi
+        if (( (throttled_int & 0x6) != 0 )); then
+            WARNINGS+=("CPU is currently throttled / frequency capped")
+        elif (( (throttled_int & 0x60000) != 0 )); then
+            WARNINGS+=("CPU throttling has occurred since boot")
+        fi
+    fi
+fi
+
 # Check Plex connectivity (skip remaining Plex checks if service is already down)
 if [ "$PLEX_DOWN" = false ]; then
     if ! curl -s --max-time 5 -o /dev/null "$PLEX_URL/identity"; then
