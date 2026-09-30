@@ -14,12 +14,12 @@
 ####### HELP #######
 show_help() {
     cat <<'HELP'
-Config Backup — Backs up all critical configuration files.
+Config Backup — Backs up all critical configuration files and databases.
 
 Usage: backup.sh [options]
 
-Backs up Kometa, UMTK, ImageMaid, and Docker compose files
-to <backups>/<hostname>-backup-YYYYMMDD.zip
+Backs up Kometa, UMTK, ImageMaid, AURA, Floppy, and Docker compose files
+with atomic SQLite online backups to <backups>/<hostname>-backup-YYYYMMDD.zip
 
 Options:
   -h, --help        Show this help message
@@ -68,6 +68,7 @@ command -v zip &>/dev/null || MISSING_DEPS+=("zip")
 command -v unzip &>/dev/null || MISSING_DEPS+=("unzip")
 command -v jq &>/dev/null || MISSING_DEPS+=("jq")
 command -v curl &>/dev/null || MISSING_DEPS+=("curl")
+command -v sqlite3 &>/dev/null || MISSING_DEPS+=("sqlite3")
 
 if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
     echo "ERROR: Missing required dependencies:"
@@ -78,9 +79,31 @@ fi
 ####### FUNCTIONS #######
 SCRIPT_NAME="backup.sh"
 
+# Helper: atomic SQLite online backup
+backup_sqlite_db() {
+    local src_db="$1"
+    local dst_db="$2"
+    local label="$3"
+
+    [ ! -f "$src_db" ] && return 0
+    echo "Collecting $label database (atomic SQLite online backup)..."
+    mkdir -p "$(dirname "$dst_db")"
+
+    if command -v sqlite3 &>/dev/null; then
+        if sqlite3 "$src_db" ".backup '$dst_db'" 2>/dev/null; then
+            local sz
+            sz=$(du -h "$dst_db" 2>/dev/null | cut -f1)
+            echo "  [✓] $label online backup created ($sz)"
+            return 0
+        fi
+    fi
+    echo "  [!] sqlite3 online backup failed, falling back to file copy"
+    cp "$src_db" "$dst_db" 2>/dev/null
+}
+
 ####### MAIN #######
 START_TIME=$(date +%s)
-echo "=== Config Backup ==="
+echo "=== Config & Database Backup ==="
 echo "Date: $(date '+%Y-%m-%d %H:%M:%S')"
 echo
 
@@ -149,12 +172,23 @@ fi
 echo "Collecting crontab..."
 crontab -l > "$TEMP_DIR/crontab.txt" 2>/dev/null
 
+# --- AURA config & database ---
+AURA_CONFIG_DIR="$HOME/docker/aura/config"
+if [ -d "$AURA_CONFIG_DIR" ]; then
+    echo "Collecting AURA config..."
+    mkdir -p "$TEMP_DIR/docker/aura/config"
+    [ -f "$AURA_CONFIG_DIR/config.yaml" ] && cp "$AURA_CONFIG_DIR/config.yaml" "$TEMP_DIR/docker/aura/config/" 2>/dev/null
+    [ -f "$AURA_CONFIG_DIR/config.yml" ] && cp "$AURA_CONFIG_DIR/config.yml" "$TEMP_DIR/docker/aura/config/" 2>/dev/null
+    if [ -f "$AURA_CONFIG_DIR/AURA.db" ]; then
+        backup_sqlite_db "$AURA_CONFIG_DIR/AURA.db" "$TEMP_DIR/docker/aura/config/AURA.db" "AURA"
+    fi
+fi
+
 # --- Floppy database ---
 FLOPPY_DB="$HOME/docker/floppy/data/db.sqlite3"
 if [ -f "$FLOPPY_DB" ]; then
-    echo "Collecting Floppy database..."
     mkdir -p "$TEMP_DIR/docker/floppy"
-    cp "$FLOPPY_DB" "$TEMP_DIR/docker/floppy/" 2>/dev/null
+    backup_sqlite_db "$FLOPPY_DB" "$TEMP_DIR/docker/floppy/db.sqlite3" "Floppy"
 fi
 
 echo

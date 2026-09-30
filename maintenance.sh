@@ -6,12 +6,14 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     cat <<'HELP'
 Media Server Maintenance — Interactive maintenance menu for the Plex stack.
 
-Usage: maintenance.sh [-h|--help] [--scheduled] [--no-discord]
+Usage: maintenance.sh [-h|--help] [--scheduled] [--truncate-logs] [--clean-docker] [--no-discord]
 
 Options:
   -h, --help        Show this help message
   --scheduled       Run unattended scheduled maintenance (system updates,
                     Docker updates, config validation, token check, disk cleanup)
+  --truncate-logs   Truncate Docker container JSON logs (>1MB) without interactive prompts
+  --clean-docker    Prune Docker dangling images, unused volumes, and truncate logs
   --no-discord      Skip Discord notifications
 
 Interactive menu includes: system updates, Docker management, service restarts,
@@ -200,12 +202,62 @@ update_containers() {
     fi
 }
 
-# Clean Docker cache (dangling images, build cache, unused networks)
+# Truncate Docker container JSON logs to prevent disk exhaustion
+truncate_container_logs() {
+    echo "---- DOCKER CONTAINER LOG TRUNCATION ----"
+    local total_truncated=0
+    local total_bytes=0
+
+    # Truncate JSON log files directly via Docker LogPath
+    for container in $(docker ps -qa 2>/dev/null); do
+        local name
+        name=$(docker inspect --format='{{.Name}}' "$container" 2>/dev/null | sed 's/^\///')
+        local logpath
+        logpath=$(docker inspect --format='{{.LogPath}}' "$container" 2>/dev/null)
+
+        if [ -n "$logpath" ] && [ -f "$logpath" ]; then
+            local size
+            size=$(sudo stat -c%s "$logpath" 2>/dev/null || echo 0)
+            if [ "$size" -gt 1048576 ]; then # > 1 MB
+                local size_mb=$(( size / 1048576 ))
+                echo "  Truncating log for $name (${size_mb} MB)..."
+                sudo truncate -s 0 "$logpath" 2>/dev/null || true
+                ((total_truncated++))
+                total_bytes=$(( total_bytes + size ))
+            fi
+        fi
+    done
+
+    # Sweep any orphaned/stopped container logs in /var/lib/docker/containers
+    if sudo test -d /var/lib/docker/containers 2>/dev/null; then
+        while IFS= read -r logfile; do
+            [ -z "$logfile" ] && continue
+            local sz
+            sz=$(sudo stat -c%s "$logfile" 2>/dev/null || echo 0)
+            if [ "$sz" -gt 5242880 ]; then # > 5 MB
+                sudo truncate -s 0 "$logfile" 2>/dev/null || true
+                ((total_truncated++))
+                total_bytes=$(( total_bytes + sz ))
+            fi
+        done < <(sudo find /var/lib/docker/containers/ -name "*-json.log" -type f 2>/dev/null)
+    fi
+
+    if [ "$total_truncated" -gt 0 ]; then
+        local saved_mb=$(( total_bytes / 1048576 ))
+        echo "[✓] Truncated $total_truncated container log file(s), reclaimed ~${saved_mb} MB"
+        notify "Truncated $total_truncated container log(s), reclaimed ~${saved_mb} MB" "success"
+    else
+        echo "[✓] All Docker container logs within normal limits (<1MB)"
+    fi
+}
+
+# Clean Docker cache (dangling images, build cache, unused networks, oversized logs)
 clean_docker() {
     echo "---- DOCKER CLEANUP ----"
     local before=$(docker system df --format '{{.Reclaimable}}' 2>/dev/null | head -1)
     docker system prune -f --volumes 2>/dev/null
     docker image prune -f 2>/dev/null
+    truncate_container_logs
     local after=$(docker system df --format '{{.Reclaimable}}' 2>/dev/null | head -1)
     echo "[✓] Docker cleanup complete (was: $before reclaimable)"
 }
@@ -558,6 +610,7 @@ show_main_menu() {
     echo "10: Config Validation"
     echo "11: Token Consistency Check"
     echo "12: Check Docker Updates (no pull)"
+    echo "13: Truncate Docker Container Logs"
     echo
     echo " C: Clean Screen"
     echo " L: View Logs"
@@ -566,6 +619,19 @@ show_main_menu() {
 }
 
 ######## MAIN ########
+
+# Standalone modes
+if [[ "$1" == "--truncate-logs" ]]; then
+    init_logging
+    truncate_container_logs
+    exit 0
+fi
+
+if [[ "$1" == "--clean-docker" ]]; then
+    init_logging
+    clean_docker
+    exit 0
+fi
 
 # Scheduled mode: run with --scheduled flag for unattended execution
 if [[ "$1" == "--scheduled" ]]; then
@@ -610,6 +676,7 @@ while true; do
         10) validate_configs ;;
         11) check_token_consistency ;;
         12) check_docker_updates ;;
+        13) truncate_container_logs ;;
         c|C) clear ;;
         l|L) 
             if [ -f "$LOG_FILE" ]; then
