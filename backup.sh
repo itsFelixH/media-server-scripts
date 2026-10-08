@@ -168,6 +168,15 @@ if [ -d "$PIBOARD_DIR/site" ]; then
     cp "$PIBOARD_DIR/nginx.conf" "$TEMP_DIR/docker/piboard/" 2>/dev/null
 fi
 
+# --- Calendar Bot files ---
+CALENDAR_BOT_DIR="$HOME/docker/calendar-bot"
+if [ -d "$CALENDAR_BOT_DIR" ]; then
+    echo "Collecting Calendar Bot files..."
+    mkdir -p "$TEMP_DIR/docker/calendar-bot"
+    [ -f "$CALENDAR_BOT_DIR/bot_runner.js" ] && cp "$CALENDAR_BOT_DIR/bot_runner.js" "$TEMP_DIR/docker/calendar-bot/" 2>/dev/null
+    [ -f "$CALENDAR_BOT_DIR/.env" ] && cp "$CALENDAR_BOT_DIR/.env" "$TEMP_DIR/docker/calendar-bot/" 2>/dev/null
+fi
+
 # --- Crontab ---
 echo "Collecting crontab..."
 crontab -l > "$TEMP_DIR/crontab.txt" 2>/dev/null
