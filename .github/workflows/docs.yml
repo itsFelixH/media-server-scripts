@@ -1,0 +1,75 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'README.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'README.md'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress run.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          # Provision Pages automatically if it isn't already enabled.
+          enablement: true
+
+      - name: Build docs site from README
+        run: |
+          mkdir -p site
+          cat > site/_config.yml << 'EOF'
+          title: Media Server Scripts
+          description: Maintenance and monitoring scripts for a Plex media server stack
+          theme: jekyll-theme-cayman
+          EOF
+          {
+            echo '---'
+            echo 'layout: default'
+            echo 'title: Home'
+            echo '---'
+            echo
+            cat README.md
+          } > site/index.md
+
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./site
+          destination: ./_site
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+
+  deploy:
+    # Only publish from the default branch; other triggers just validate the build.
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
