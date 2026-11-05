@@ -202,14 +202,18 @@ if [ -n "$zombie_count" ] && [ "$zombie_count" -gt 15 ]; then
 fi
 
 # Check temperature
+max_temp_c=0
 for thermal in /sys/class/thermal/thermal_zone*/temp; do
     if [ -r "$thermal" ]; then
         temp_c=$(( $(cat "$thermal") / 1000 ))
-        if [ "$temp_c" -gt "$THRESH_TEMP_CRITICAL" ]; then
-            ISSUES+=("CPU temperature at ${temp_c}°C")
-        fi
+        [ "$temp_c" -gt "$max_temp_c" ] && max_temp_c="$temp_c"
     fi
 done
+if [ "$max_temp_c" -gt "$THRESH_TEMP_CRITICAL" ]; then
+    ISSUES+=("CPU temperature at ${max_temp_c}°C")
+elif [ "$max_temp_c" -gt "${THRESH_TEMP_WARN:-70}" ]; then
+    WARNINGS+=("CPU temperature elevated at ${max_temp_c}°C")
+fi
 
 # Check hardware throttling & under-voltage (Raspberry Pi telemetry)
 if command -v vcgencmd >/dev/null 2>&1; then
