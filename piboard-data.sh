@@ -51,7 +51,10 @@ read -r load_1 load_5 load_15 <<< $(awk '{print $1, $2, $3}' /proc/loadavg)
 
 cpu_temp=0
 for thermal in /sys/class/thermal/thermal_zone*/temp; do
-    [ -r "$thermal" ] && cpu_temp=$(( $(cat "$thermal") / 1000 )) && break
+    if [ -r "$thermal" ]; then
+        _t=$(( $(cat "$thermal") / 1000 ))
+        [ "$_t" -gt "$cpu_temp" ] && cpu_temp="$_t"
+    fi
 done
 
 uptime_str=$(uptime -p | sed 's/^up //')
@@ -108,16 +111,14 @@ if cache_stale "$SERVICES_CACHE" 300; then
 
     # Services
     _svc_json="[]"
-    for svc in "$PLEX_SERVICE" "${ARR_SERVICES[@]}"; do
+    for svc in "$PLEX_SERVICE" "${ARR_SERVICES[@]}" piboard-api; do
         svc="${svc//$'\r'/}"
         [ -z "$svc" ] && continue
-        status=$(systemctl is-active "$svc" 2>/dev/null) || {
-            if [ "$svc" = "rpimonitor" ] || [ "$svc" = "rpimonitord" ]; then
-                status=$(systemctl is-active rpimonitor 2>/dev/null || systemctl is-active rpimonitord 2>/dev/null || (nc -z 127.0.0.1 8888 2>/dev/null && echo "active") || echo "inactive")
-            else
-                status="inactive"
-            fi
-        }
+        if [ "$svc" = "piboard-api" ]; then
+            status=$(systemctl --user is-active piboard-api 2>/dev/null || (nc -z 127.0.0.1 5052 2>/dev/null && echo "active") || echo "inactive")
+        else
+            status=$(systemctl is-active "$svc" 2>/dev/null || echo "inactive")
+        fi
         _svc_json=$(echo "$_svc_json" | jq --arg n "$svc" --arg s "$status" '. + [{"name":$n,"status":$s}]')
     done
 
