@@ -162,7 +162,7 @@ Creates a zip archive of all critical configuration files and saves it to the me
 
 #### Output
 
-- Archive: `/mnt/Media/backups/bundepi-backup-YYYYMMDD_HHMMSS.zip`
+- Archive: `/mnt/Media/backups/<hostname>-backup-YYYYMMDD.zip`
 
 </details>
 
