@@ -177,6 +177,27 @@ if [ -d "$CALENDAR_BOT_DIR" ]; then
     [ -f "$CALENDAR_BOT_DIR/.env" ] && cp "$CALENDAR_BOT_DIR/.env" "$TEMP_DIR/docker/calendar-bot/" 2>/dev/null
 fi
 
+# --- Home Assistant, Matter & Thread Mesh Stack ---
+HA_BASE_DIR="$HOME/docker/homeassistant"
+if [ -d "$HA_BASE_DIR" ]; then
+    echo "Collecting Home Assistant, Matter & Thread configs..."
+    mkdir -p "$TEMP_DIR/docker/homeassistant/config"
+    cp "$HA_BASE_DIR/config"/*.yaml "$TEMP_DIR/docker/homeassistant/config/" 2>/dev/null
+    [ -f "$HA_BASE_DIR/config/secrets.yaml" ] && cp "$HA_BASE_DIR/config/secrets.yaml" "$TEMP_DIR/docker/homeassistant/config/" 2>/dev/null
+    if [ -d "$HA_BASE_DIR/config/.storage" ]; then
+        mkdir -p "$TEMP_DIR/docker/homeassistant/config/.storage"
+        cp -r "$HA_BASE_DIR/config/.storage"/* "$TEMP_DIR/docker/homeassistant/config/.storage/" 2>/dev/null
+    fi
+    if [ -d "$HA_BASE_DIR/matter-data" ]; then
+        mkdir -p "$TEMP_DIR/docker/homeassistant/matter-data"
+        cp -r "$HA_BASE_DIR/matter-data"/* "$TEMP_DIR/docker/homeassistant/matter-data/" 2>/dev/null
+    fi
+    if [ -d "$HA_BASE_DIR/otbr-data" ]; then
+        mkdir -p "$TEMP_DIR/docker/homeassistant/otbr-data"
+        cp -r "$HA_BASE_DIR/otbr-data"/* "$TEMP_DIR/docker/homeassistant/otbr-data/" 2>/dev/null
+    fi
+fi
+
 # --- Crontab ---
 echo "Collecting crontab..."
 crontab -l > "$TEMP_DIR/crontab.txt" 2>/dev/null
