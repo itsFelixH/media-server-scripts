@@ -209,6 +209,27 @@ ALLOWED_TASKS = {
         "description": "Restart AURA",
         "category": "docker",
     },
+    "restart-homeassistant": {
+        "type": "command",
+        "command": "docker compose restart homeassistant",
+        "cwd": "homeassistant",
+        "description": "Restart Home Assistant",
+        "category": "docker",
+    },
+    "restart-matter-server": {
+        "type": "command",
+        "command": "docker compose restart matter-server",
+        "cwd": "homeassistant",
+        "description": "Restart Matter Server",
+        "category": "docker",
+    },
+    "restart-otbr": {
+        "type": "command",
+        "command": "docker compose restart otbr",
+        "cwd": "homeassistant",
+        "description": "Restart OpenThread Border Router",
+        "category": "docker",
+    },
 
     # --- Docker: update (pull + recreate) ---
     "update-kometa": {
@@ -251,6 +272,13 @@ ALLOWED_TASKS = {
         "command": "docker compose pull && docker compose up -d",
         "cwd": "aura",
         "description": "Update AURA",
+        "category": "docker",
+    },
+    "update-homeassistant": {
+        "type": "command",
+        "command": "docker compose pull && docker compose up -d",
+        "cwd": "homeassistant",
+        "description": "Update Home Assistant Stack",
         "category": "docker",
     },
 
@@ -407,7 +435,7 @@ ALLOWED_TASKS = {
     "update-all": {
         "type": "command",
         "command": (
-            'for d in kometa umtk imagemaid floppy piboard aura; do '
+            'for d in kometa umtk imagemaid floppy piboard aura homeassistant; do '
             'cd ~/docker/$d && docker compose pull && docker compose up -d; '
             'done'
         ),
@@ -419,11 +447,16 @@ ALLOWED_TASKS = {
 }
 
 # Containers that support log viewing
-LOGGABLE_CONTAINERS = ["kometa", "umtk", "imagemaid", "floppy", "piboard", "floppy-redis", "radarr", "sonarr", "bazarr", "aura"]
+LOGGABLE_CONTAINERS = [
+    "kometa", "umtk", "imagemaid", "floppy", "piboard", "floppy-redis",
+    "radarr", "sonarr", "bazarr", "aura", "homeboard", "calendar-bot",
+    "homeassistant", "matter-server", "otbr"
+]
 
 # Log file sources (non-docker)
 LOG_FILE_SOURCES = {
     "plex": "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Logs/Plex Media Server.log",
+    "homeassistant-file": str(Path.home() / "docker/homeassistant/config/home-assistant.log"),
     "umtk-file": None,  # resolved dynamically (latest UMTK_*.log)
     "imagemaid-file": str(Path.home() / "ImageMaid/config/logs/imagemaid.log"),
     # Script logs (latest file in each dir)
