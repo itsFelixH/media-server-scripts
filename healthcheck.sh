@@ -98,9 +98,13 @@ for container in "${DOCKER_CONTAINERS[@]}"; do
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
         # Attempt auto-restart via compose
         compose_dir="$HOME/docker/$container"
+        case "$container" in
+            matter-server|otbr) compose_dir="$HOME/docker/homeassistant" ;;
+            floppy-redis) compose_dir="$HOME/docker/floppy" ;;
+        esac
         if [ -f "$compose_dir/docker-compose.yml" ]; then
             echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-RESTART: attempting $container" >> "$LOG_FILE"
-            docker compose -f "$compose_dir/docker-compose.yml" up -d >/dev/null 2>&1
+            docker compose -f "$compose_dir/docker-compose.yml" up -d "$container" >/dev/null 2>&1
             RESTARTED+=("$container")
         fi
     fi
@@ -299,6 +303,28 @@ if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^homeboard$"; then
     if [ "$homeboard_http" != "200" ]; then
         WARNINGS+=("Homeboard dashboard not responding at http://localhost:7070 (HTTP $homeboard_http)")
     fi
+fi
+
+# Check Home Assistant web UI (if container is running)
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^homeassistant$"; then
+    ha_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -L "http://localhost:8123/" 2>/dev/null)
+    if [ "$ha_http" != "200" ] && [ "$ha_http" != "302" ]; then
+        ISSUES+=("Home Assistant not responding at http://localhost:8123 (HTTP $ha_http)")
+    fi
+fi
+
+# Check Matter Server WebSocket endpoint (if container is running)
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^matter-server$"; then
+    matter_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:5580/" 2>/dev/null)
+    if [ "$matter_http" != "200" ] && [ "$matter_http" != "404" ] && [ "$matter_http" != "400" ]; then
+        WARNINGS+=("Matter Server not responding at http://localhost:5580 (HTTP $matter_http)")
+    fi
+fi
+
+# Check AdGuard Home on lumos
+adguard_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -L "http://lumos/" 2>/dev/null)
+if [ "$adguard_http" != "200" ] && [ "$adguard_http" != "302" ]; then
+    WARNINGS+=("AdGuard Home on lumos not responding at http://lumos (HTTP $adguard_http)")
 fi
 
 # Check internet connectivity & DNS resolution
