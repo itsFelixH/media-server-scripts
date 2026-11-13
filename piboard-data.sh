@@ -144,6 +144,13 @@ if cache_stale "$SERVICES_CACHE" 300; then
         _svc_json=$(echo "$_svc_json" | jq --arg n "$svc" --arg s "$status" '. + [{"name":$n,"status":$s}]')
     done
 
+    # AdGuard Home on lumos (DNS Shield)
+    _ag_status="inactive"
+    if curl -s -m 2 -o /dev/null http://lumos 2>/dev/null; then
+        _ag_status="active"
+    fi
+    _svc_json=$(echo "$_svc_json" | jq --arg n "adguardhome" --arg s "$_ag_status" '. + [{"name":$n,"status":$s}]')
+
     # Containers
     _ctr_json="[]"
     for ctr in "${DOCKER_CONTAINERS[@]}" piboard floppy-redis; do
