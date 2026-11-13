@@ -134,6 +134,10 @@ check_docker_updates() {
 
     for container in "${DOCKER_CONTAINERS[@]}"; do
         local compose_dir="$HOME/docker/$container"
+        case "$container" in
+            matter-server|otbr) compose_dir="$HOME/docker/homeassistant" ;;
+            floppy-redis) compose_dir="$HOME/docker/floppy" ;;
+        esac
         if [ ! -f "$compose_dir/docker-compose.yml" ]; then
             continue
         fi
@@ -176,14 +180,18 @@ update_containers() {
 
     for container in "${DOCKER_CONTAINERS[@]}"; do
         local compose_dir="$HOME/docker/$container"
+        case "$container" in
+            matter-server|otbr) compose_dir="$HOME/docker/homeassistant" ;;
+            floppy-redis) compose_dir="$HOME/docker/floppy" ;;
+        esac
         if [ -f "$compose_dir/docker-compose.yml" ]; then
             echo "Updating $container..."
-            if cd "$compose_dir" && docker compose pull 2>&1 | grep -q "Downloaded newer image\|Pull complete"; then
-                docker compose up -d
+            if cd "$compose_dir" && docker compose pull "$container" 2>&1 | grep -q "Downloaded newer image\|Pull complete"; then
+                docker compose up -d "$container"
                 echo "[✓] $container updated and restarted"
                 ((updated++))
             else
-                docker compose up -d >/dev/null 2>&1
+                docker compose up -d "$container" >/dev/null 2>&1
                 echo "[=] $container already up to date"
             fi
         else
