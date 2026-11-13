@@ -86,6 +86,28 @@ fi
 hw_throttled="0x0"
 command -v vcgencmd >/dev/null 2>&1 && hw_throttled=$(vcgencmd get_throttled 2>/dev/null | awk -F'=' '{print $2}' || echo "0x0")
 
+# Server hardware & peripheral telemetry (AWOW AK10 / Intel N95)
+hw_model="AWOW AK10 Mini-PC"
+if [ -f /sys/devices/virtual/dmi/id/product_name ]; then
+    _dmi_p=$(cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null || echo "")
+    [ -n "$_dmi_p" ] && [ "$_dmi_p" != "Default string" ] && hw_model="$_dmi_p"
+fi
+
+cpu_model=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//' || echo "")
+[ -z "$cpu_model" ] && cpu_model="Intel Processor N95"
+
+cpu_cores=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 4)
+
+# Intel QuickSync Video (QSV) hardware video transcoding
+qsv_ok="false"
+[ -e /dev/dri/renderD128 ] && qsv_ok="true"
+
+# SONOFF Zigbee/Thread USB Dongle Plus MG24
+thread_usb_ok="false"
+if [ -e /dev/ttyUSB0 ] || ls /dev/serial/by-id/usb-SONOFF* >/dev/null 2>&1; then
+    thread_usb_ok="true"
+fi
+
 # Emergency reboot telemetry
 reboot_strikes=0
 [ -f "$LOG_DIR/healthcheck/.reboot_strike_count" ] && reboot_strikes=$(cat "$LOG_DIR/healthcheck/.reboot_strike_count" 2>/dev/null || echo 0)
@@ -755,6 +777,11 @@ jq -n \
     --argjson dns_resolve_ok "$dns_resolve_ok" \
     --arg tv_total_size "${tv_total_size:-}" \
     --arg movies_total_size "${movies_total_size:-}" \
+    --arg hw_model "$hw_model" \
+    --arg cpu_model "$cpu_model" \
+    --argjson cpu_cores "${cpu_cores:-4}" \
+    --argjson qsv_ok "$qsv_ok" \
+    --argjson thread_usb_ok "$thread_usb_ok" \
     --argjson genres "$genre_json" \
     --argjson decades "$decade_json" \
     --argjson age_medium "$_age_medium" \
@@ -788,6 +815,13 @@ jq -n \
             last_auto_reboot_ts: $last_auto_reboot_ts,
             media_mounted: $media_mount_ok,
             dns_ok: $dns_resolve_ok
+        },
+        hardware: {
+            model: $hw_model,
+            cpu: $cpu_model,
+            cores: $cpu_cores,
+            qsv_available: $qsv_ok,
+            thread_usb: $thread_usb_ok
         },
         plex: $plex,
         kometa_status: $kometa_status,
