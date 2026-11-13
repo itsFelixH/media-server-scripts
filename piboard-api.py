@@ -281,6 +281,20 @@ ALLOWED_TASKS = {
         "description": "Update Home Assistant Stack",
         "category": "docker",
     },
+    "update-matter-server": {
+        "type": "command",
+        "command": "docker compose pull matter-server && docker compose up -d matter-server",
+        "cwd": "homeassistant",
+        "description": "Update Matter Server",
+        "category": "docker",
+    },
+    "update-otbr": {
+        "type": "command",
+        "command": "docker compose pull otbr && docker compose up -d otbr",
+        "cwd": "homeassistant",
+        "description": "Update OpenThread Border Router",
+        "category": "docker",
+    },
 
     # --- Kometa manual run ---
     "kometa-run": {
