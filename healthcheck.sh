@@ -101,6 +101,7 @@ for container in "${DOCKER_CONTAINERS[@]}"; do
         case "$container" in
             matter-server|otbr) compose_dir="$HOME/docker/homeassistant" ;;
             floppy-redis) compose_dir="$HOME/docker/floppy" ;;
+            homeboard) compose_dir="$HOME/git/homeboard" ;;
         esac
         if [ -f "$compose_dir/docker-compose.yml" ]; then
             echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-RESTART: attempting $container" >> "$LOG_FILE"

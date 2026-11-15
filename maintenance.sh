@@ -137,6 +137,7 @@ check_docker_updates() {
         case "$container" in
             matter-server|otbr) compose_dir="$HOME/docker/homeassistant" ;;
             floppy-redis) compose_dir="$HOME/docker/floppy" ;;
+            homeboard) compose_dir="$HOME/git/homeboard" ;;
         esac
         if [ ! -f "$compose_dir/docker-compose.yml" ]; then
             continue
@@ -183,6 +184,7 @@ update_containers() {
         case "$container" in
             matter-server|otbr) compose_dir="$HOME/docker/homeassistant" ;;
             floppy-redis) compose_dir="$HOME/docker/floppy" ;;
+            homeboard) compose_dir="$HOME/git/homeboard" ;;
         esac
         if [ -f "$compose_dir/docker-compose.yml" ]; then
             echo "Updating $container..."
