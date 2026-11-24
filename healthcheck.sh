@@ -398,9 +398,9 @@ else
     aura_http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -L "http://localhost:3000/" 2>/dev/null)
     if [ "$aura_http" != "200" ]; then
         ISSUES+=("AURA web UI unreachable at http://localhost:3000 (HTTP $aura_http)")
-    elif docker logs aura --tail 50 2>&1 | grep -q "adding onboarding routes only" && ! docker logs aura --tail 50 2>&1 | grep -q "adding full routes"; then
+    elif timeout 15 docker logs aura --tail 50 2>&1 | grep -q "adding onboarding routes only" && ! timeout 15 docker logs aura --tail 50 2>&1 | grep -q "adding full routes"; then
         ISSUES+=("AURA is stuck in degraded onboarding mode (database not initialized)")
-    elif docker logs aura --tail 50 2>&1 | grep -Eq "Failed to unmarshal|cannot parse.*Z07:00"; then
+    elif timeout 15 docker logs aura --tail 50 2>&1 | grep -Eq "Failed to unmarshal|cannot parse.*Z07:00"; then
         ISSUES+=("AURA cron jobs failing due to database unmarshal/timestamp parsing error")
     fi
 
