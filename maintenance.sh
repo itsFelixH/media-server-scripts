@@ -13,6 +13,7 @@ Options:
   --scheduled       Run unattended scheduled maintenance (system updates,
                     Docker updates, config validation, token check, disk cleanup)
   --truncate-logs   Truncate Docker container JSON logs (>1MB) without interactive prompts
+                    (containers with native max-size rotation are skipped)
   --clean-docker    Prune Docker dangling images, unused volumes, and truncate logs
   --no-discord      Skip Discord notifications
 
@@ -212,18 +213,30 @@ update_containers() {
     fi
 }
 
-# Truncate Docker container JSON logs to prevent disk exhaustion
+# Truncate Docker container JSON logs to prevent disk exhaustion.
+# Containers with native log rotation (max-size) are skipped: Docker already caps those
+# logs, and truncating a file the daemon is actively appending to can leave NUL padding
+# that makes `docker logs --tail` hang (incident 2026-11-24, dockerd at 370% CPU).
 truncate_container_logs() {
     echo "---- DOCKER CONTAINER LOG TRUNCATION ----"
     local total_truncated=0
     local total_bytes=0
+    local native_skipped=0
 
     # Truncate JSON log files directly via Docker LogPath
     for container in $(docker ps -qa 2>/dev/null); do
         local name
-        name=$(docker inspect --format='{{.Name}}' "$container" 2>/dev/null | sed 's/^\///')
+        name=$(docker inspect --format="{{.Name}}" "$container" 2>/dev/null | sed "s/^\///")
         local logpath
-        logpath=$(docker inspect --format='{{.LogPath}}' "$container" 2>/dev/null)
+        logpath=$(docker inspect --format="{{.LogPath}}" "$container" 2>/dev/null)
+
+        # Skip containers that rotate their own logs (native max-size in compose/daemon.json)
+        local max_size
+        max_size=$(docker inspect --format="{{index .HostConfig.LogConfig.Config \"max-size\"}}" "$container" 2>/dev/null)
+        if [ -n "$max_size" ]; then
+            native_skipped=$((native_skipped + 1))
+            continue
+        fi
 
         if [ -n "$logpath" ] && [ -f "$logpath" ]; then
             local size
@@ -238,10 +251,23 @@ truncate_container_logs() {
         fi
     done
 
-    # Sweep any orphaned/stopped container logs in /var/lib/docker/containers
+    # Sweep orphaned/stopped container logs in /var/lib/docker/containers.
+    # Only live *-json.log files are touched (never rotated/archived ones), and never
+    # files belonging to containers that rotate natively.
     if sudo test -d /var/lib/docker/containers 2>/dev/null; then
         while IFS= read -r logfile; do
             [ -z "$logfile" ] && continue
+            case "$logfile" in
+                *-json.log) ;;
+                *) continue ;;
+            esac
+            local cid
+            cid=$(basename "$(dirname "$logfile")")
+            local orphan_max
+            orphan_max=$(docker inspect --format="{{index .HostConfig.LogConfig.Config \"max-size\"}}" "$cid" 2>/dev/null)
+            if [ -n "$orphan_max" ]; then
+                continue
+            fi
             local sz
             sz=$(sudo stat -c%s "$logfile" 2>/dev/null || echo 0)
             if [ "$sz" -gt 5242880 ]; then # > 5 MB
@@ -252,12 +278,16 @@ truncate_container_logs() {
         done < <(sudo find /var/lib/docker/containers/ -name "*-json.log" -type f 2>/dev/null)
     fi
 
+    if [ "$native_skipped" -gt 0 ]; then
+        echo "[i] Skipped $native_skipped container(s) with native log rotation (max-size)"
+    fi
+
     if [ "$total_truncated" -gt 0 ]; then
         local saved_mb=$(( total_bytes / 1048576 ))
         echo "[✓] Truncated $total_truncated container log file(s), reclaimed ~${saved_mb} MB"
         notify "Truncated $total_truncated container log(s), reclaimed ~${saved_mb} MB" "success"
     else
-        echo "[✓] All Docker container logs within normal limits (<1MB)"
+        echo "[✓] All Docker container logs within normal limits"
     fi
 }
 
