@@ -153,7 +153,7 @@ if cache_stale "$SERVICES_CACHE" 300; then
 
     # Containers
     _ctr_json="[]"
-    for ctr in "${DOCKER_CONTAINERS[@]}" piboard floppy-redis; do
+    for ctr in "${DOCKER_CONTAINERS[@]}"; do
         status=$(docker inspect --format='{{.State.Status}}' "$ctr" 2>/dev/null || echo "not found")
         health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$ctr" 2>/dev/null || echo "unknown")
         _ctr_json=$(echo "$_ctr_json" | jq --arg n "$ctr" --arg s "$status" --arg h "$health" '. + [{"name":$n,"status":$s,"health":$h}]')
