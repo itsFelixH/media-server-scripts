@@ -331,6 +331,19 @@ The Docker-based services have their own internal schedules:
 | AURA | AutoDownload daily at 04:00 | Internal cron in container |
 | ImageMaid | Weekly Sundays at 07:00 | `SCHEDULE` in `.env` |
 
+UMTK is also the generator for every TV collection Kometa ingests (`/umtk/*.yml` inside the Kometa
+container): `Coming Soon`, `Upcoming Seasons`, `New Season Started`, `Upcoming Episode`,
+`Upcoming Finale`, `Season Finale`, `Final Episode`, `Returning Shows`, `New Shows`. It runs at 02:00,
+before the 05:00 Kometa run, so the YAMLs are always fresh. `New Season Started`
+(`recent_days_new_season_started: 90` in `~/UMTK/config/tssk_config.yml`) lists shows whose newest
+season — season 2 or later — premiered within the last 90 days and replaces the retired
+`recently-premiered.sh` text-file list; brand-new shows are covered by TSSK `New Shows`.
+
+Those TSSK collections are set to `sync_mode: sync` (UMTK ships `append`, which only ever adds — it
+never shrinks a shelf), so every window stays accurate: after the switch `Upcoming Seasons` dropped from
+32 accumulated items to the 8 currently in its 61-day window, `Returning Shows` 89 → 78, and the stale
+`New Shows` shelf (44 items for a 7-day window, nothing added that week) was deleted.
+
 ---
 
 ## Discord Notifications
@@ -360,6 +373,8 @@ All scripts share a single `discord_notify` function defined in `config.sh`. No 
 ├── plex-vs-arrs.sh         # Compare Plex vs Radarr/Sonarr
 ├── piboard-data.sh         # PiBoard system & service data collector
 ├── piboard-api.py          # PiBoard action API sidecar server
+├── docs/                   # Known-issue / bug-report write-ups
+│   └── kometa-plex-emoji-collection-removal-bug.md
 ├── logs/                   # Per-script log subdirectories (gitignored)
 │   ├── archive-reports/
 │   ├── backup/
@@ -369,6 +384,24 @@ All scripts share a single `discord_notify` function defined in `config.sh`. No 
 ├── encode-exclude.txt      # Encode queue exclusion patterns
 └── reports/                # Generated JSON reports (gitignored)
 ```
+
+---
+
+## Known Issues
+
+- **Kometa could not remove items from emoji-named Plex collections** — Plex `1.41.4.9463`, Kometa
+  `nightly`. Runs logged `N Movie Removed` / `N Show Removed`, but Plex kept the items, so collections
+  such as `Most Watched This Week` accumulated stale members (including `Coming Soon` leaks). plexapi
+  sends emoji as 4-byte UTF-8 in the `collection[].tag.tag-=` remove parameter; Plex only matches
+  CESU-8. Adds are unaffected (index-form rewrite).
+
+  **Mitigated 2026-11-24** — every collection name is now ASCII-only (no emoji in `config/movies.yml`,
+  `config/tv.yml`, `~/UMTK/config/config.yml` or `~/UMTK/config/tssk_config.yml`) and the existing Plex
+  collections were renamed in place, so their ratingKeys (and AURA artwork mappings) survived. Verified
+  with a collections-only Kometa run: Movies `Most Watched This Week` 37 → 22 items, TV 44 → 30.
+  Keep new collection names emoji-free; accented letters (`Español`, `Deutsch`) are fine — only
+  astral-plane emoji break the tag match. Evidence, repro and probes:
+  [`docs/kometa-plex-emoji-collection-removal-bug.md`](docs/kometa-plex-emoji-collection-removal-bug.md).
 
 ---
 
