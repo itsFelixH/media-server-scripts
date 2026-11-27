@@ -365,12 +365,16 @@ if [ "$TODAY" != "$_last_updates_check" ]; then
     if [ -n "$API_KEY_RADARR" ]; then
         _radarr_data=$(curl -s --max-time 5 "http://localhost:7878/api/v3/update?apiKey=$API_KEY_RADARR" 2>/dev/null)
         _radarr_current=$(echo "$_radarr_data" | jq -r '[.[] | select(.installed)] | .[0].version // ""' 2>/dev/null)
-        _radarr_latest=$(echo "$_radarr_data" | jq -r '[.[] | select(.installed | not)] | .[0].version // ""' 2>/dev/null)
+        # /update returns the installed release plus its history newest-first, so
+        # "first non-installed" is an *older* build once you are up to date. Take
+        # the newest stable (non-nightly) release instead.
+        _radarr_latest=$(echo "$_radarr_data" | jq -r '[.[] | select((.branch // "master") | ascii_downcase != "nightly")] | sort_by(.releaseDate // "") | last | .version // ""' 2>/dev/null)
     fi
     if [ -n "$API_KEY_SONARR" ]; then
         _sonarr_data=$(curl -s --max-time 5 "http://localhost:8989/api/v3/update?apiKey=$API_KEY_SONARR" 2>/dev/null)
         _sonarr_current=$(echo "$_sonarr_data" | jq -r '[.[] | select(.installed)] | .[0].version // ""' 2>/dev/null)
-        _sonarr_latest=$(echo "$_sonarr_data" | jq -r '[.[] | select(.installed | not)] | .[0].version // ""' 2>/dev/null)
+        # Same as Radarr: newest stable release, never a nightly or an old build.
+        _sonarr_latest=$(echo "$_sonarr_data" | jq -r '[.[] | select((.branch // "main") | ascii_downcase != "nightly")] | sort_by(.releaseDate // "") | last | .version // ""' 2>/dev/null)
     fi
     _docker_updates='[]'
     for _ctr in "${DOCKER_CONTAINERS[@]}"; do
