@@ -42,6 +42,7 @@ media:
 tools:
   kometa: ~/kometa/config             # Kometa config root (*.yml + metadata/ backed up)
   umtk: ~/UMTK/config                 # UMTK config (logs assumed at <umtk>/logs/)
+  umtk_output: ~/UMTK/kometa          # UMTK-generated Kometa YAMLs (read by Kometa)
   imagemaid: ~/ImageMaid/config       # ImageMaid config (.env file)
   compose_files:                      # Docker compose files to include in backups
     - ~/docker/kometa/docker-compose.yml

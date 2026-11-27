@@ -63,6 +63,7 @@ bash healthcheck.sh
 | `episode-gaps.sh` | Find TV shows with missing episodes vs TMDB | Sundays 03:00 |
 | `storage-report.sh` | Disk usage breakdown by folder/codec/resolution (both libraries) | 28th of month |
 | `plex-vs-arrs.sh` | Compare Plex library against Radarr/Sonarr | Sundays 02:30 |
+| `fix-umtk-overlays.sh` | Rewrite empty UMTK overlay placeholders so Kometa can load them | Daily 02:30 |
 | `media-analyzer.sh` | Filter/analyze video files by codec, resolution, size | Manual |
 | `runkometa.sh` | Interactive Kometa runner with library/mode selection | Manual |
 | `piboard-api.py` | PiBoard action button API server (port 5052) | Always running (systemd) |
@@ -170,6 +171,21 @@ Creates a zip archive of all critical configuration files and saves it to the me
 <summary><strong>archive-reports.sh</strong> — report archiving</summary>
 
 Daily report archiving script. Checks for modified JSON/MD reports in `reports/` and archives date-stamped copies to `/mnt/Media/reports/`.
+
+</details>
+
+<details>
+<summary><strong>fix-umtk-overlays.sh</strong> — UMTK overlay placeholder sanitiser</summary>
+
+UMTK writes a comment-only `*_OVERLAYS.yml` when a category has no matching library items, and Kometa then refuses to load that file (`YAML Error: overlays attribute is required`). This script rewrites such placeholders (`overlays: {}`, `overlays: []`, bare `overlays:`, empty or comment-only files) with a valid overlay that matches nothing, so every overlay file referenced in `~/kometa/config/config.yml` loads cleanly and applies no artwork. UMTK overwrites the placeholder as soon as a show matches.
+
+#### Config keys used
+
+`tools.umtk_output` (default `~/UMTK/kometa`)
+
+#### Output
+
+- Log: `logs/fix-umtk-overlays/fix-umtk-overlays_YYYYMMDD_HHMMSS.log`
 
 </details>
 
