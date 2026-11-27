@@ -87,6 +87,7 @@ Monitors system resources and service health. Runs silently, logs output, and se
 - **Disk**: Mount check (`/mnt/Media`), disk usage percentage
 - **Hardware**: CPU temperature (Raspberry Pi `vcgencmd` or `/sys/class/thermal/`), RAM usage
 - **Network**: Internet connectivity ping
+- **UMTK overlays**: every `/umtk/*.yml` referenced by the Kometa config exists, and no `*_OVERLAYS.yml` is empty or has an empty `overlays:` block (`overlays: {}`, `overlays: []`, bare key, comment-only) — repaired on the spot via `fix-umtk-overlays.sh`
 - **Maintenance**: Days since last `maintenance.sh` run
 
 #### Output

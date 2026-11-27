@@ -345,6 +345,49 @@ if [ -z "$latest_umtk" ]; then
     WARNINGS+=("UMTK has not run in over 26 hours")
 fi
 
+# Check UMTK overlay files (Kometa aborts its run when a referenced overlay file
+# is missing, empty, or has no overlay definitions — a bare "overlays:" key,
+# "overlays: {}", "overlays: []" and comment-only files all parse to an empty
+# overlay block). Shared by the check and the post-repair re-check.
+umtk_overlay_is_valid() {
+    awk '
+        /^overlays:[[:space:]]*$/ { seen = 1; next }
+        seen && /^[[:space:]]+[^[:space:]#]/ { ok = 1; exit }
+        END { exit !(seen && ok) }
+    ' "$1" 2>/dev/null
+}
+if [ -d "$UMTK_OUTPUT_DIR" ]; then
+    umtk_missing_refs=()
+    while IFS= read -r ref; do
+        [ -z "$ref" ] && continue
+        [ -f "$UMTK_OUTPUT_DIR/$ref" ] || umtk_missing_refs+=("$ref")
+    done < <(grep -oE '/umtk/[A-Za-z0-9_.-]+\.yml' "$KOMETA_CONFIG/config.yml" 2>/dev/null | sed 's|^/umtk/||' | sort -u)
+
+    umtk_invalid=()
+    for overlay_file in "$UMTK_OUTPUT_DIR"/*_OVERLAYS.yml; do
+        [ -e "$overlay_file" ] || continue
+        umtk_overlay_is_valid "$overlay_file" || umtk_invalid+=("$(basename "$overlay_file")")
+    done
+
+    if [ ${#umtk_invalid[@]} -gt 0 ]; then
+        echo "[$(date +%Y-%m-%d\ %H:%M)] AUTO-HEAL: ${#umtk_invalid[@]} unloadable UMTK overlay file(s), running fix-umtk-overlays.sh" >> "$LOG_FILE"
+        "$SCRIPTS_DIR/fix-umtk-overlays.sh" -q >/dev/null 2>&1
+        still_invalid=()
+        for name in "${umtk_invalid[@]}"; do
+            umtk_overlay_is_valid "$UMTK_OUTPUT_DIR/$name" || still_invalid+=("$name")
+        done
+        if [ ${#still_invalid[@]} -gt 0 ]; then
+            WARNINGS+=("UMTK overlay file(s) still unloadable after auto-repair: ${still_invalid[*]}")
+        else
+            WARNINGS+=("UMTK overlay file(s) were unloadable (would break the Kometa run) and were auto-repaired: ${umtk_invalid[*]}")
+        fi
+    fi
+
+    if [ ${#umtk_missing_refs[@]} -gt 0 ]; then
+        WARNINGS+=("Kometa config references missing UMTK overlay file(s): ${umtk_missing_refs[*]}")
+    fi
+fi
+
 # Check Kometa last run (should have run within threshold) & hung execution recovery
 if [ -f "$KOMETA_CONFIG/logs/meta.log" ]; then
     kometa_age=$(find "$KOMETA_CONFIG/logs/meta.log" -mmin -$THRESH_TASK_STALE_MIN 2>/dev/null | head -1)
